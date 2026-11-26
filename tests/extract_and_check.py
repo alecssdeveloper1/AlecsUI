@@ -28,8 +28,8 @@ def main() -> int:
     raw = INSTALL.read_text(encoding="utf-8", errors="replace")
     errors: list[str] = []
 
-    if "ALECSUI_VER=1.9.2" not in raw:
-        errors.append("missing ALECSUI_VER=1.9.2")
+    if "ALECSUI_VER=1.9.3" not in raw:
+        errors.append("missing ALECSUI_VER=1.9.3")
     if re.search(r'subj "/CN=www\.google\.com"', raw):
         errors.append("P0: stunnel still generates CN=www.google.com")
     if "echo \"admin / $NEWPASS\" >" in raw:
@@ -68,8 +68,8 @@ def main() -> int:
         pass
 
     html = extract_heredoc(raw, "PANELHTML")
-    if "v1.9.2" not in html:
-        errors.append("UI branding not bumped to v1.9.2")
+    if "v1.9.3" not in html:
+        errors.append("UI branding not bumped to v1.9.3")
     if "X-CSRF" not in html and "csrf" not in html:
         errors.append("frontend CSRF wiring missing")
 

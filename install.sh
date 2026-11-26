@@ -1,5 +1,5 @@
 #!/bin/bash
-# AlecsUI v1.9.2 installer
+# AlecsUI v1.9.3 installer
 # Self-hosted SSH + Xray panel: SSH, SSL, SSH WebSocket (+TLS), UDPGW, Xray (VLESS XHTTP TLS / TCP TLS / Reality / XHTTP, Trojan), OpenVPN (TCP + HTTP proxy), Hysteria2 (UDP), WireGuard, DNS tunnel (dnstt) + V2Ray,
 # web panel with users, subscriptions, data and device limits, Telegram alerts, backups, 2FA, and a terminal menu.
 # Run as root on Ubuntu or Debian:  bash install.sh   (running it again updates AlecsUI and keeps users and settings)
@@ -9,7 +9,7 @@ set -e
 trap 'spin_stop 0 "Failed" "Eșec" 2>/dev/null || true; echo -e "\n\033[1;31mERROR / EROARE: line $LINENO\033[0m"' ERR
 [ "${EUID:-$(id -u)}" -ne 0 ] && { echo "Please run as root"; exit 1; }
 
-ALECSUI_VER=1.9.2
+ALECSUI_VER=1.9.3
 SSH_PORT_DEF=22
 SSL_PORT=443; WS_PORT=8880; WSTLS_PORT=2083; UDPGW_PORT=7300; VWSTLS_PORT=8443; VTCP_PORT=2053; VWS_PORT=8080; REALITY_PORT=8444; TROJAN_PORT=2096; OVPN1_PORT=1194; OVPN2_PORT=110; SQUID_PORT=3128; HY_PORT=443; HY_HOP=20000-30000; WG_PORT=51820; HYV=2.13.0; DNSTTV=v1.20240513.0
 # BadVPN tag 1.999.130 resolved commit (pinned; clone must match)
@@ -273,45 +273,70 @@ ours_listener(){
 }
 
 # busy PORT proto  — checks IPv4 and IPv6; does not steal foreign ports
+# Quiet mode: BUSY_QUIET=1 suppresses banners (used by pick_free)
 busy(){
   local port="$1" proto="${2:-tcp}" line pid rest foreign=0 fam
   for fam in -4 -6; do
-    local ss_args=(-ln "$fam")
+    local ss_args=(-Hln "$fam")
     [ "$proto" = udp ] && ss_args+=(-u) || ss_args+=(-t)
+    # Explicit sport filter (catches *:443, [::]:443, 0.0.0.0:443)
     while IFS= read -r line; do
-      echo "$line" | grep -Eq ":${port}([^0-9]|$)" || continue
+      [ -n "$line" ] || continue
+      echo "$line" | grep -Eq ":${port}([^0-9]|$)|:${port}$" || continue
       pid=$(echo "$line" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
       if [ -z "$pid" ]; then
-        echo "Port $port/$proto ($fam) in use (owner unknown):"; echo "  $line"; foreign=1; continue
+        [ "${BUSY_QUIET:-0}" = 1 ] || { echo "Port $port/$proto ($fam) in use (owner unknown):"; echo "  $line"; }
+        foreign=1; continue
       fi
       if ours_listener "$pid"; then continue; fi
       rest=$(ps -p "$pid" -o user=,pid=,comm=,args= 2>/dev/null || echo "pid=$pid")
-      echo "Port $port/$proto ($fam) is already in use by another program:"
-      echo "  $rest"; echo "  $line"; foreign=1
-    done < <(ss "${ss_args[@]}" -p 2>/dev/null || true)
+      [ "${BUSY_QUIET:-0}" = 1 ] || {
+        echo "Port $port/$proto ($fam) is already in use by another program:"
+        echo "  $rest"; echo "  $line"
+      }
+      foreign=1
+    done < <(ss "${ss_args[@]}" -p "sport = :$port" 2>/dev/null || ss "${ss_args[@]}" -p 2>/dev/null | grep -E ":${port}([^0-9]|$)" || true)
   done
   if [ "$foreign" = 1 ]; then
-    echo "AlecsUI will not take over foreign ports."
+    [ "${BUSY_QUIET:-0}" = 1 ] || echo "AlecsUI will not take over foreign ports."
     return 1
   fi
   return 0
+}
+
+# Persist port vars into /etc/tunnel/config
+config_set_port(){
+  local k="$1" v="$2"
+  mkdir -p /etc/tunnel
+  if [ -f /etc/tunnel/config ] && grep -q "^${k}=" /etc/tunnel/config 2>/dev/null; then
+    sed -i "s/^${k}=.*/${k}=${v}/" /etc/tunnel/config
+  else
+    echo "${k}=${v}" >> /etc/tunnel/config
+  fi
+  eval "${k}=${v}"
 }
 
 # If preferred port is foreign-busy, pick next free from candidates (never steal)
 pick_free_tcp(){
   local var="$1"; shift
   local cur="${!var}" c
-  if busy "$cur" tcp; then return 0; fi
-  echo -e "\033[1;33mPort $cur/tcp is taken by a foreign process — selecting an alternate for $var.\033[0m"
+  BUSY_QUIET=1
+  if busy "$cur" tcp; then BUSY_QUIET=0; return 0; fi
+  BUSY_QUIET=0
+  warn "Port $cur/tcp is taken — picking another for $var." "Portul $cur/tcp e ocupat — alegem altul pentru $var."
+  ss -lntp 2>/dev/null | grep -E ":${cur}([^0-9]|$)" || true
   for c in "$@"; do
     [ "$c" = "$cur" ] && continue
+    BUSY_QUIET=1
     if busy "$c" tcp; then
-      eval "$var=$c"
-      echo "  -> $var=$c"
+      BUSY_QUIET=0
+      config_set_port "$var" "$c"
+      ok "$var → $c" "$var → $c"
       return 0
     fi
+    BUSY_QUIET=0
   done
-  echo -e "\033[1;31mERROR: no free TCP port for $var among candidates.\033[0m"
+  errx "No free TCP port for $var among candidates." "Niciun port TCP liber pentru $var."
   exit 1
 }
 
@@ -372,11 +397,14 @@ stunnel_stop_clean(){
 }
 
 stunnel_write_conf(){
-  mkdir -p /etc/alecsui
-  local accept_ssl
-  if [ -f /etc/tunnel/h443.on ] && [ "$SSL_PORT" = 443 ]; then accept_ssl=127.0.0.1:10443; else accept_ssl=$SSL_PORT; fi
+  mkdir -p /etc/alecsui /run/alecsui
+  local accept_ssl accept_wstls
+  # Bind IPv4 explicitly (avoids :::PORT races with WHM/cPanel/nginx on dual-stack)
+  if [ -f /etc/tunnel/h443.on ] && [ "$SSL_PORT" = 443 ]; then accept_ssl=127.0.0.1:10443; else accept_ssl=0.0.0.0:$SSL_PORT; fi
+  accept_wstls=0.0.0.0:$WSTLS_PORT
   cat > "$ALECSUI_STUNNEL_CONF" <<S
 ; AlecsUI $ALECSUI_VER dedicated stunnel — foreign stunnel4 untouched
+foreground = yes
 pid = /run/alecsui/stunnel.pid
 cert = $ALECSUI_STUNNEL_PEM
 sslVersionMin = TLSv1.2
@@ -386,7 +414,7 @@ socket = r:TCP_NODELAY=1
 accept = $accept_ssl
 connect = 127.0.0.1:$SSH_PORT
 [ssh-ws-tls]
-accept = $WSTLS_PORT
+accept = $accept_wstls
 connect = 127.0.0.1:$WS_PORT
 S
   chmod 644 "$ALECSUI_STUNNEL_CONF"
@@ -394,7 +422,8 @@ S
   cat > /etc/systemd/system/${ALECSUI_STUNNEL_UNIT}.service <<S
 [Unit]
 Description=AlecsUI stunnel (SSH SSL / WS-TLS)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/bin/stunnel4 $ALECSUI_STUNNEL_CONF
@@ -408,22 +437,40 @@ S
   manifest_add units "${ALECSUI_STUNNEL_UNIT}.service"
 }
 
+# Re-check ports right before start; on bind conflict auto-reassign and retry once
 stunnel_start_ok(){
-  stunnel_stop_clean
-  stunnel_write_conf
-  systemctl daemon-reload
-  systemctl enable "$ALECSUI_STUNNEL_UNIT" >/dev/null 2>&1 || true
-  if ! systemctl start "$ALECSUI_STUNNEL_UNIT"; then
-    echo -e "\033[1;31mERROR: $ALECSUI_STUNNEL_UNIT failed to start\033[0m"
-    journalctl -u "$ALECSUI_STUNNEL_UNIT" -n 20 --no-pager 2>/dev/null || true
-    return 1
-  fi
-  sleep 1
-  if systemctl is-active --quiet "$ALECSUI_STUNNEL_UNIT" && ss -lntp 2>/dev/null | grep -E ":($SSL_PORT|$WSTLS_PORT|10443)\\b" | grep -qi stunnel; then
-    echo "$ALECSUI_STUNNEL_UNIT is active and listening"
-    return 0
-  fi
-  echo -e "\033[1;31mERROR: $ALECSUI_STUNNEL_UNIT not listening after start\033[0m"
+  local attempt=1
+  while [ "$attempt" -le 2 ]; do
+    # Always re-pick free SSL/WS-TLS ports immediately before bind (WHM/cPanel often grabs 443 later)
+    pick_free_tcp SSL_PORT 443 444 10443 8443 9443 2443 3443
+    pick_free_tcp WSTLS_PORT 2083 2084 2087 2096 2082 8443
+    stunnel_stop_clean
+    stunnel_write_conf
+    systemctl daemon-reload
+    systemctl enable "$ALECSUI_STUNNEL_UNIT" >/dev/null 2>&1 || true
+    if systemctl start "$ALECSUI_STUNNEL_UNIT"; then
+      sleep 1
+      if systemctl is-active --quiet "$ALECSUI_STUNNEL_UNIT"; then
+        if ss -lntp 2>/dev/null | grep -E ":(${SSL_PORT}|${WSTLS_PORT}|10443)\\b" | grep -qi stunnel; then
+          ok "$ALECSUI_STUNNEL_UNIT listening (SSL $SSL_PORT, WS-TLS $WSTLS_PORT)" \
+             "$ALECSUI_STUNNEL_UNIT ascultă (SSL $SSL_PORT, WS-TLS $WSTLS_PORT)"
+          config_set_port SSL_PORT "$SSL_PORT"
+          config_set_port WSTLS_PORT "$WSTLS_PORT"
+          return 0
+        fi
+      fi
+    fi
+    warn "Stunnel bind failed (attempt $attempt). Who holds the ports:" \
+         "Stunnel nu a putut lega porturile (încercarea $attempt). Cine le ține:"
+    ss -lntp 2>/dev/null | grep -E ":(${SSL_PORT}|${WSTLS_PORT})([^0-9]|$)" || true
+    journalctl -u "$ALECSUI_STUNNEL_UNIT" -n 15 --no-pager 2>/dev/null || true
+    # Force different candidates next loop
+    if [ "$SSL_PORT" = 443 ]; then SSL_PORT=444; else SSL_PORT=$((SSL_PORT + 1)); fi
+    if [ "$WSTLS_PORT" = 2083 ]; then WSTLS_PORT=2084; else WSTLS_PORT=$((WSTLS_PORT + 1)); fi
+    attempt=$((attempt + 1))
+  done
+  errx "$ALECSUI_STUNNEL_UNIT still not listening — SSH SSL / WS-TLS down. Fix: menu → Port change" \
+       "$ALECSUI_STUNNEL_UNIT tot nu ascultă — SSH SSL / WS-TLS oprite. Remediere: menu → Port change"
   systemctl status "$ALECSUI_STUNNEL_UNIT" --no-pager -l 2>/dev/null || true
   return 1
 }
@@ -522,11 +569,11 @@ fi
 pre_upgrade_backup
 vps_probe
 
-# Port plan: never steal; reassign SSL if foreign stunnel holds 443
+# Port plan: never steal; reassign SSL if foreign process holds 443 (re-checked again in stunnel_start_ok)
 stunnel_stop_clean
-pick_free_tcp SSL_PORT 443 444 10443 8443 9443
+pick_free_tcp SSL_PORT 443 444 10443 8443 9443 2443 3443
 pick_free_tcp WS_PORT 8880 8881 8081 9080
-pick_free_tcp WSTLS_PORT 2083 2084 2087 2096
+pick_free_tcp WSTLS_PORT 2083 2084 2087 2096 2082
 busy "$PANEL_PORT" tcp || { echo "PANEL_PORT busy"; exit 1; }
 if [ -c /dev/net/tun ]; then
   pick_free_tcp OVPN1_PORT 1194 1195 1196
@@ -550,6 +597,12 @@ PKGS="openssh-server stunnel4 fail2ban cmake build-essential git openssl curl cr
 # shellcheck disable=SC2086
 apt-get install -y -qq $PKGS >/dev/null
 apt-get install -y -qq haproxy >/dev/null 2>&1 || warn "HAProxy missing — 443 mode stays off." "HAProxy lipsește — modul 443 rămâne oprit."
+# Package stunnel4 must not race AlecsUI on 443 — only disable the stock unit when config is empty/default
+if [ ! -f "$ORIGD/stunnel.conf.pre-alecsui" ]; then
+  if [ ! -f /etc/stunnel/stunnel.conf ] || ! grep -qE '^\s*accept\s*=' /etc/stunnel/stunnel.conf 2>/dev/null; then
+    systemctl disable --now stunnel4 2>/dev/null || true
+  fi
+fi
 spin_stop 1 "Packages ready" "Pachete gata"
 [ "${CAP_OVPN:-0}" = 1 ] || warn "OpenVPN skipped (no TUN)." "OpenVPN omis (fără TUN)."
 
@@ -4854,9 +4907,9 @@ a.btn{text-decoration:none;color:var(--t)}a.btn.pri{color:#fff}
 <label for="lp">Password</label><div class="fi"><span data-i="lock"></span><input id="lp" type="password" autocomplete="current-password"><button type="button" class="ib" id="lpe" aria-label="Show password"></button></div>
 <div id="lcw" hidden><label for="lc">6-digit code from your authenticator app</label><div class="fi"><span data-i="shield"></span><input id="lc" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div></div>
 <div id="capw" hidden><label for="lcap">Type the letters from the picture</label><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><img id="capi" alt="Security check picture" width="200" height="64" style="border-radius:8px;max-width:100%"><button type="button" class="ib" id="capr" aria-label="Show a new picture"></button></div><div class="fi"><span data-i="shield"></span><input id="lcap" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="8"></div></div>
-<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.2</p></form></div>
-<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.2</a></aside>
-<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.2</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.2</a></main><nav id="bn" aria-label="Main"></nav></div>
+<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.3</p></form></div>
+<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.3</a></aside>
+<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.3</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.3</a></main><nav id="bn" aria-label="Main"></nav></div>
 <div id="dt" hidden><div class="dts"><div class="dth"><b>User details</b><button class="btn sm" id="dx" aria-label="Close">Close</button></div><div id="dtb"></div></div></div>
 <div id="md" hidden><form class="card" id="mf"></form></div>
 <div id="sxo" hidden><div class="sxp" role="dialog" aria-label="Search"><div class="fi"><span data-i="search"></span><input id="sxi" placeholder="Search users, settings, tools..." autocomplete="off" spellcheck="false" aria-label="Search"><button type="button" class="btn sm" id="sxx">Esc</button></div><div id="sxr" role="listbox"></div></div></div>
@@ -5875,7 +5928,7 @@ Restart=on-failure
 RestartSec=3
 TimeoutStartSec=60
 LimitNOFILE=65535
-# v1.9.2: panel still root (compat). Helper socket is the allowlisted privileged path.
+# v1.9.3: panel still root (compat). Helper socket is the allowlisted privileged path.
 # Full User= drop planned after VM soak tests.
 NoNewPrivileges=false
 ProtectHome=read-only
@@ -6044,7 +6097,7 @@ CF=/etc/tunnel/config; LIB=/usr/local/lib/tunnel; PY=/opt/tunnel-panel/panel.py
 # Prefer versioned GitHub Releases. main is only a fallback when ALECSUI_ALLOW_MAIN=1.
 UPDATE_URL="${ALECSUI_UPDATE_URL:-https://api.github.com/repos/alecssdeveloper1/AlecsUI/releases/latest}"
 UPDATE_RAW_MAIN="https://raw.githubusercontent.com/alecssdeveloper1/AlecsUI/main/install.sh"
-ALECSUI_VER_INSTALLED="1.9.2"
+ALECSUI_VER_INSTALLED="1.9.3"
 G='\033[1;32m'; Y='\033[1;33m'; C='\033[1;36m'; N='\033[0m'
 . $CF
 myip(){ curl -4 -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}'; }
@@ -6341,7 +6394,7 @@ uninst(){
 while true; do
   cat <<T
 
-===== AlecsUI v1.9.2 MENU =====
+===== AlecsUI v1.9.3 MENU =====
    github.com/alecssdeveloper1/AlecsUI
 1) Uninstall
 2) Panel info

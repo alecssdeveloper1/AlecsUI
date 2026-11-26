@@ -4,6 +4,14 @@ All notable changes to AlecsUI are documented here. Format based on [Keep a Chan
 
 AlecsUI is a **modified** fork of ReXUI (Ali / chaliraza777), GPL-3.0.
 
+## [1.9.3] — 2026-11-26
+
+### Fixed
+- Stunnel: re-check + auto-reassign SSL/WS-TLS **immediately before bind** (WHM/cPanel often holds 443/2083)
+- Stunnel conf: `foreground = yes`, bind `0.0.0.0:PORT` (clearer failures under systemd Type=simple)
+- Retry once with alternate ports on Address-already-in-use; persist new ports to `/etc/tunnel/config`
+- Disable stock `stunnel4` unit after apt when its config has no `accept=` (avoids racing AlecsUI)
+
 ## [1.9.2] — 2026-03-26
 
 ### Added
