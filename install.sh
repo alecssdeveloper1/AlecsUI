@@ -10,8 +10,39 @@ trap 'echo -e "\n\033[1;31mERROR: failed at line $LINENO\033[0m"' ERR
 SSH_PORT_DEF=22
 SSL_PORT=443; WS_PORT=8880; WSTLS_PORT=2083; UDPGW_PORT=7300; VWSTLS_PORT=8443; VTCP_PORT=2053; VWS_PORT=8080; REALITY_PORT=8444; TROJAN_PORT=2096; OVPN1_PORT=1194; OVPN2_PORT=110; SQUID_PORT=3128; HY_PORT=443; HY_HOP=20000-30000; WG_PORT=51820; HYV=2.13.0; DNSTTV=v1.20240513.0
 LIB=/usr/local/lib/tunnel
+XRAY_VER=v26.11.9
 step(){ echo -e "\n\033[1;36m[$1/11]\033[0m $2"; }
-busy(){ if ss -tlnp | grep ":$1 " | grep -qv -e stunnel -e python3 -e xray -e squid -e openvpn -e haproxy; then echo "Port $1 is already in use:"; ss -tlnp | grep ":$1 "; exit 1; fi; }
+busy(){ if ss -tlnp | grep ":$1 " | grep -qv -e stunnel -e python3 -e xray -e squid -e openvpn -e haproxy -e udpgw; then echo "Port $1 is already in use:"; ss -tlnp | grep ":$1 "; exit 1; fi; }
+# Robust download for VPS with slow/blocked GitHub (timeouts + mirrors + wget fallback)
+dl(){
+  local out="$1" url="$2" min="${3:-0}" u ok=0
+  local mirrors=(
+    ""
+    "https://ghfast.top/"
+    "https://ghproxy.net/"
+    "https://mirror.ghproxy.com/"
+    "https://github.moeyy.xyz/"
+  )
+  for m in "${mirrors[@]}"; do
+    if [[ "$url" == https://github.com/* ]]; then u="${m}${url}"; else u="$url"; [ -n "$m" ] && continue; fi
+    echo "  -> $u"
+    rm -f "$out"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fL --connect-timeout 8 --max-time 90 --retry 1 --retry-delay 1 -o "$out" "$u" && ok=1 || ok=0
+    elif command -v wget >/dev/null 2>&1; then
+      wget -q --timeout=8 --tries=2 -O "$out" "$u" && ok=1 || ok=0
+    else
+      echo "ERROR: curl/wget missing"; return 1
+    fi
+    if [ "$ok" = 1 ] && [ -f "$out" ] && [ "$(stat -c%s "$out" 2>/dev/null || echo 0)" -ge "$min" ]; then
+      echo "  OK ($(du -h "$out" | awk '{print $1}'))"
+      return 0
+    fi
+    echo "  failed, next mirror..."
+    rm -f "$out"
+  done
+  return 1
+}
 [ -f /etc/tunnel/config ] && . /etc/tunnel/config
 if [ -z "$PANEL_PORT" ]; then
   PANEL_PORT=$(shuf -i 20000-59999 -n1)
@@ -271,34 +302,24 @@ step 8 "Xray core"
 if [ ! -x /usr/local/bin/xray ] || [ ! -f /usr/local/bin/geosite.dat ]; then
   case $(uname -m) in x86_64|amd64) XA=64;; aarch64|arm64) XA=arm64-v8a;; *) echo "This CPU ($(uname -m)) is not supported"; exit 1;; esac
   rm -rf /tmp/xr && mkdir /tmp/xr
-  XR_PATH="XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip"
+  echo "Downloading Xray (timeouts + mirrors; may take 1-3 minutes)..."
   XR_OK=0
-  for XR_BASE in \
-    "https://github.com/" \
-    "https://ghfast.top/https://github.com/" \
-    "https://ghproxy.net/https://github.com/" \
-    "https://mirror.ghproxy.com/https://github.com/"
-  do
-    echo "Downloading Xray from ${XR_BASE}${XR_PATH}"
-    if curl -fL --connect-timeout 20 --max-time 300 --retry 2 --retry-delay 2 \
-         --progress-bar -o /tmp/xr/x.zip "${XR_BASE}${XR_PATH}" \
-      && [ "$(stat -c%s /tmp/xr/x.zip 2>/dev/null || echo 0)" -gt 1000000 ]; then
-      XR_OK=1
-      echo "Xray zip downloaded ($(du -h /tmp/xr/x.zip | awk '{print $1}'))"
-      break
+  for XR_REL in "latest" "$XRAY_VER"; do
+    if [ "$XR_REL" = "latest" ]; then
+      XR_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip"
+      XR_DGST="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip.dgst"
+    else
+      XR_URL="https://github.com/XTLS/Xray-core/releases/download/${XR_REL}/Xray-linux-$XA.zip"
+      XR_DGST="https://github.com/XTLS/Xray-core/releases/download/${XR_REL}/Xray-linux-$XA.zip.dgst"
     fi
-    echo "Download failed or too small, trying next mirror..."
-    rm -f /tmp/xr/x.zip
+    echo "Trying release: $XR_REL"
+    if dl /tmp/xr/x.zip "$XR_URL" 1000000; then XR_OK=1; break; fi
   done
-  [ "$XR_OK" = 1 ] || { echo "ERROR: could not download Xray (GitHub blocked/slow on this VPS). Try again later or install Xray manually."; exit 1; }
-  curl -fL --connect-timeout 15 --max-time 60 -o /tmp/xr/x.dgst \
-    "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip.dgst" 2>/dev/null \
-    || curl -fL --connect-timeout 15 --max-time 60 -o /tmp/xr/x.dgst \
-    "https://ghfast.top/https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip.dgst" 2>/dev/null \
-    || true
+  [ "$XR_OK" = 1 ] || { echo -e "\033[1;31mERROR: could not download Xray.\033[0m GitHub is blocked/slow on this VPS. Install manually then re-run:"; echo "  mkdir -p /tmp/xr && cd /tmp/xr"; echo "  # upload Xray-linux-$XA.zip here, then:"; echo "  unzip -qo Xray-linux-$XA.zip xray geoip.dat geosite.dat && install -m 755 xray /usr/local/bin/xray && install -m 644 geoip.dat geosite.dat /usr/local/bin/"; exit 1; }
+  dl /tmp/xr/x.dgst "$XR_DGST" 20 || true
   XS=$(grep -ioE '^SHA(2-)?256[^=]*= *[0-9a-f]{64}' /tmp/xr/x.dgst 2>/dev/null | grep -ioE '[0-9a-f]{64}$' | head -1 | tr 'A-F' 'a-f')
   if [ -z "$XS" ] || [ "$(sha256sum /tmp/xr/x.zip | awk '{print $1}')" != "$XS" ]; then
-    echo "WARNING: Xray checksum file missing/mismatched; installing zip anyway (size check passed)."
+    echo "WARNING: Xray checksum missing/mismatched; installing zip anyway (size OK)."
   else
     echo "Xray checksum OK"
   fi
@@ -342,7 +363,8 @@ if [ -z "$HA" ]; then echo "WARNING: Hysteria2 is not available for $(uname -m),
 elif /usr/local/bin/hysteria version 2>/dev/null | grep -q "v$HYV"; then echo "Hysteria2 is up to date"
 else
   HT=$(mktemp -d); HU="https://github.com/apernet/hysteria/releases/download/app/v$HYV"
-  if curl -fsSL --max-time 180 -o $HT/hy "$HU/hysteria-linux-$HA" && curl -fsSL --max-time 60 -o $HT/hashes.txt "$HU/hashes.txt"; then
+  echo "Downloading Hysteria2..."
+  if dl $HT/hy "$HU/hysteria-linux-$HA" 1000000 && dl $HT/hashes.txt "$HU/hashes.txt" 20; then
     HW=$(grep -E "[ /*]hysteria-linux-$HA\$" $HT/hashes.txt | awk '{print $1}' | head -1); HG=$(sha256sum $HT/hy | awk '{print $1}')
     if [ -n "$HW" ] && [ "$HW" = "$HG" ]; then install -m 755 $HT/hy /usr/local/bin/hysteria; echo "Hysteria2 installed (checksum OK)"
     else echo "WARNING: Hysteria2 checksum did not match, it was NOT installed"; fi
