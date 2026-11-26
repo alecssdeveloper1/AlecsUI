@@ -1,5 +1,5 @@
 #!/bin/bash
-# AlecsUI v1.9.3 installer
+# AlecsUI v1.9.4 installer
 # Self-hosted SSH + Xray panel: SSH, SSL, SSH WebSocket (+TLS), UDPGW, Xray (VLESS XHTTP TLS / TCP TLS / Reality / XHTTP, Trojan), OpenVPN (TCP + HTTP proxy), Hysteria2 (UDP), WireGuard, DNS tunnel (dnstt) + V2Ray,
 # web panel with users, subscriptions, data and device limits, Telegram alerts, backups, 2FA, and a terminal menu.
 # Run as root on Ubuntu or Debian:  bash install.sh   (running it again updates AlecsUI and keeps users and settings)
@@ -9,7 +9,7 @@ set -e
 trap 'spin_stop 0 "Failed" "Eșec" 2>/dev/null || true; echo -e "\n\033[1;31mERROR / EROARE: line $LINENO\033[0m"' ERR
 [ "${EUID:-$(id -u)}" -ne 0 ] && { echo "Please run as root"; exit 1; }
 
-ALECSUI_VER=1.9.3
+ALECSUI_VER=1.9.4
 SSH_PORT_DEF=22
 SSL_PORT=443; WS_PORT=8880; WSTLS_PORT=2083; UDPGW_PORT=7300; VWSTLS_PORT=8443; VTCP_PORT=2053; VWS_PORT=8080; REALITY_PORT=8444; TROJAN_PORT=2096; OVPN1_PORT=1194; OVPN2_PORT=110; SQUID_PORT=3128; HY_PORT=443; HY_HOP=20000-30000; WG_PORT=51820; HYV=2.13.0; DNSTTV=v1.20240513.0
 # BadVPN tag 1.999.130 resolved commit (pinned; clone must match)
@@ -1053,6 +1053,9 @@ def P(k,d):
     try: return int(E.get(k,d))
     except ValueError: return d
 HELPER_SOCK='/run/alecsui/helper.sock'
+# Mutating systemctl verbs only — show/is-active/status must NOT go through helper
+# (helper rejects --quiet and multi-unit show → false "Not installed" / Xray Stopped).
+_SYSCTL_WRITE=frozenset({'restart','reload','start','stop','enable','disable','kill','reset-failed','try-restart','reload-or-restart','daemon-reload'})
 def helper_call(op,args=None,inp=None,t=40):
     """Prefer allowlisted helper when available; never send arbitrary shell."""
     try:
@@ -1072,13 +1075,14 @@ def helper_call(op,args=None,inp=None,t=40):
         return None
 def run(*a,inp=None,t=40):
     a=list(a)
-    # Route known privileged ops through helper when socket is up
-    if a and a[0]=='systemctl' and os.path.exists(HELPER_SOCK):
+    # Panel still runs as root: route only simple mutating systemctl (verb + unit, no flags) via helper
+    if a and a[0]=='systemctl' and len(a)>=3 and a[1] in _SYSCTL_WRITE and not a[2].startswith('-') and os.path.exists(HELPER_SOCK):
         h=helper_call('systemctl',a[1:],t=t)
-        if h is not None: return h
+        if h is not None and h.returncode==0: return h
+        # Fall through on helper rejection so root panel can still manage services
     if a and a[0] in ('useradd','userdel','usermod','chpasswd','ufw','iptables','ip6tables') and os.path.exists(HELPER_SOCK):
         h=helper_call('run',a,inp=inp,t=t)
-        if h is not None: return h
+        if h is not None and (h.returncode==0 or not (h.stderr or '').startswith('bin not')): return h
     try: return sp.run(a,input=inp,capture_output=True,text=True,timeout=t)
     except Exception as x: return sp.CompletedProcess(a,1,'',str(x))
 def log(*a): print(*a,flush=True)
@@ -3109,7 +3113,7 @@ def ports_view():
         res.append({'name':n,'port':p,'proto':pr,'listen':bool(prog),'prog':prog,'fw':f})
     hop=hyhop() if hy_on() else None
     if hop: res.append({'name':'Hysteria2 port hopping','port':'%d-%d'%hop,'proto':'udp','listen':True,'prog':'redirect','fw':'off' if fw is None else ('open' if any(x[0]=='udp' and x[1]<=hop[0] and x[2]>=hop[1] for x in fw) else 'closed')})
-    known={'haproxy','sshd','xray','alecsui-stunnel','stunnel','python3','openvpn','squid','hysteria','dnstt-server','badvpn-udpgw','systemd-resolve','chronyd','dhclient','systemd-network'}
+    known={'haproxy','sshd','ssh','xray','alecsui-stunnel','stunnel','stunnel4','python3','openvpn','squid','hysteria','dnstt-server','badvpn-udpgw','systemd-resolve','chronyd','dhclient','systemd-network'}
     other=[{'port':p,'proto':pr,'prog':g} for (pr,p),g in sorted(ls.items(),key=lambda x:(x[0][0],x[0][1])) if (pr,p) not in seen and g not in known]
     dup={}
     for n,p,pr in mine: dup.setdefault((pr,p),[]).append(n)
@@ -3215,7 +3219,7 @@ def server_check():
     ls=ss_listeners(); bad=[]
     for n,p,pr in port_list():
         g=ls.get((pr,p))
-        if g and g!='?' and g not in ('haproxy','sshd','xray','alecsui-stunnel','stunnel','python3','openvpn','squid','hysteria','dnstt-server'): bad.append('%s %d/%s used by %s'%(n,p,pr,g))
+        if g and g!='?' and g not in ('haproxy','sshd','ssh','xray','alecsui-stunnel','stunnel','stunnel4','python3','openvpn','squid','hysteria','dnstt-server','badvpn-udpgw'): bad.append('%s %d/%s used by %s'%(n,p,pr,g))
     if bad: add('clash','Port conflicts','fail','; '.join(bad))
     sync=run('timedatectl','show','-p','NTPSynchronized','--value').stdout.strip()
     if sync: add('time','Clock','ok' if sync=='yes' else 'warn','In sync.' if sync=='yes' else 'The clock is not synced. Reality and TLS can fail with a wrong clock.',None if sync=='yes' else 'ntp')
@@ -3383,7 +3387,7 @@ def h_busy():
     L=ss_listeners(); bad=[]
     for p in (443,80):
         g=L.get(('tcp',p))
-        if g and g not in ('alecsui-stunnel','stunnel','haproxy','python3','?'): bad.append('%d (%s)'%(p,g))
+        if g and g not in ('alecsui-stunnel','stunnel','stunnel4','haproxy','python3','?'): bad.append('%d (%s)'%(p,g))
     for k,d in (('VWSTLS_PORT',8443),('VTCP_PORT',2053),('VWS_PORT',8080),('REALITY_PORT',8444),('TROJAN_PORT',2096),('WS_PORT',8880),('WSTLS_PORT',2083),('PANEL_PORT',0)):
         if P(k,d) in (443,80): bad.append('%d (used by %s in AlecsUI, change it with menu → Port change)'%(P(k,d),k.replace('_PORT','')))
     return bad
@@ -4907,9 +4911,9 @@ a.btn{text-decoration:none;color:var(--t)}a.btn.pri{color:#fff}
 <label for="lp">Password</label><div class="fi"><span data-i="lock"></span><input id="lp" type="password" autocomplete="current-password"><button type="button" class="ib" id="lpe" aria-label="Show password"></button></div>
 <div id="lcw" hidden><label for="lc">6-digit code from your authenticator app</label><div class="fi"><span data-i="shield"></span><input id="lc" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div></div>
 <div id="capw" hidden><label for="lcap">Type the letters from the picture</label><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><img id="capi" alt="Security check picture" width="200" height="64" style="border-radius:8px;max-width:100%"><button type="button" class="ib" id="capr" aria-label="Show a new picture"></button></div><div class="fi"><span data-i="shield"></span><input id="lcap" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="8"></div></div>
-<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.3</p></form></div>
-<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.3</a></aside>
-<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.3</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.3</a></main><nav id="bn" aria-label="Main"></nav></div>
+<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.4</p></form></div>
+<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.4</a></aside>
+<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.4</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.4</a></main><nav id="bn" aria-label="Main"></nav></div>
 <div id="dt" hidden><div class="dts"><div class="dth"><b>User details</b><button class="btn sm" id="dx" aria-label="Close">Close</button></div><div id="dtb"></div></div></div>
 <div id="md" hidden><form class="card" id="mf"></form></div>
 <div id="sxo" hidden><div class="sxp" role="dialog" aria-label="Search"><div class="fi"><span data-i="search"></span><input id="sxi" placeholder="Search users, settings, tools..." autocomplete="off" spellcheck="false" aria-label="Search"><button type="button" class="btn sm" id="sxx">Esc</button></div><div id="sxr" role="listbox"></div></div></div>
@@ -5185,7 +5189,7 @@ ${usageCard(u.hist)}
 ${onlineCard(u)}
 ${hx||u.kind=='hy2'?'':`<div class="card"><div class="lab">User page</div><p class="note">Send this link to the user. ${u.kind=='dns'?'It shows their usage, expiry and the DNS tunnel details.':u.kind=='wg'?'It shows their usage, expiry, the WireGuard QR and the .conf file.':u.kind=='ovpn'?'It shows their usage, expiry and the OpenVPN file download.':'It shows their usage, expiry, SSH details and payloads.'}</p>${cbox('User page',u.sub,false)}<a class="btn sm" href="${X(u.sub)}" target="_blank" rel="noopener" style="margin-top:10px;text-decoration:none">Open user page</a></div>`}
 ${hx?`<div class="card"><div class="ct"><div class="lab">Subscription link</div><button class="btn sm" data-ua="newsub">${I('refresh',14)}New link</button></div><p class="note">Import into v2rayNG, NekoBox or Hiddify. It contains this user's V2Ray configs (the inbounds they have) and shows usage and expiry.</p>${cbox('Subscription',u.sub)}<a class="btn sm" href="${X(u.sub)}" target="_blank" rel="noopener" style="margin-top:10px;text-decoration:none">Open user page</a></div>
-<div class="card"><div class="ct"><div class="lab">Xray configs</div><button class="btn sm" data-ua="newuuid">${I('refresh',14)}New UUID</button></div><p class="note">Tap a config to copy it. XHTTP needs a recent app (v2rayNG 1.9.30+, Hiddify, NekoBox with Xray core).</p>${u.links.map(l=>cbox(l.name+(l.alt?' · port '+(l.url.match(/:(\d+)\?/)||[])[1]+' (or '+l.alt+')':''),l.url)+(l.name=='VLESS XHTTP (no TLS)'&&!u.plaindomain?'<p class="note bad" style="margin-top:6px">New Xray apps refuse VLESS without TLS on an IP address. Set a domain (Settings → Server address, or a domain certificate) to use this config.</p>':'')).join('')}</div>
+<div class="card"><div class="ct"><div class="lab">Xray configs</div><button class="btn sm" data-ua="newuuid">${I('refresh',14)}New UUID</button></div><p class="note">Tap a config to copy it. XHTTP needs a recent app (v2rayNG 1.9.40+, Hiddify, NekoBox with Xray core).</p>${u.links.map(l=>cbox(l.name+(l.alt?' · port '+(l.url.match(/:(\d+)\?/)||[])[1]+' (or '+l.alt+')':''),l.url)+(l.name=='VLESS XHTTP (no TLS)'&&!u.plaindomain?'<p class="note bad" style="margin-top:6px">New Xray apps refuse VLESS without TLS on an IP address. Set a domain (Settings → Server address, or a domain certificate) to use this config.</p>':'')).join('')}</div>
 `:''}
 ${hs?`<div class="card"><div class="ct"><div class="lab">SSH account</div><button class="btn sm" data-cp="${cp(sshAll)}">Copy all</button></div>
 ${row('Host',u.addr)}${row('Username',u.name)}${row('Password',u.pw||'Unknown (set a new one with Edit)')}${row('SSH',p.SSH_PORT)}${row('SSH SSL / TLS',AP(u,'SSL_PORT'))}${row('SSH WS',AP(u,'WS_PORT'))}${row('SSH WS TLS',AP(u,'WSTLS_PORT'))}${row('UDPGW','127.0.0.1:'+p.UDPGW_PORT)}</div>
@@ -5862,13 +5866,22 @@ def ok(msg='ok',**k): return dict(ok=1,msg=msg,**k)
 def err(m): return {'ok':0,'e':m}
 def handle(req):
     op=str(req.get('op','')); args=req.get('args') or []
-    if not isinstance(args,list) or len(args)>12: return err('bad args')
+    if not isinstance(args,list) or len(args)>40: return err('bad args')
     args=[str(a)[:200] for a in args]
     if op=='systemctl':
-        if len(args)<2 or args[0] not in ('restart','reload','start','stop','is-active','enable','disable'): return err('bad systemctl')
-        if args[1] not in ALLOW_UNITS and not args[1].startswith('alecsui-ovpn@'): return err('unit not allowed')
+        if not args or args[0] not in ('restart','reload','start','stop','is-active','is-enabled','enable','disable','show'): return err('bad systemctl')
+        # Allow flags before unit(s), e.g. is-active --quiet xray
+        units=[x for x in args[1:] if x and not x.startswith('-') and not x.startswith('Id,') and '=' not in x and not x.startswith('/')]
+        # show -p Id,LoadState,... unit1 unit2 — keep only unit-like tokens
+        units=[x for x in units if x in ALLOW_UNITS or x.startswith('alecsui-ovpn@') or x.endswith('.service')]
+        if args[0]!='show' and not units: return err('no unit')
+        if args[0]!='show':
+            for u in units:
+                u0=u.replace('.service','')
+                if u0 not in ALLOW_UNITS and not u0.startswith('alecsui-ovpn@'): return err('unit not allowed')
+        if len(args)>32: return err('bad args')
         r=subprocess.run(['systemctl']+args,capture_output=True,text=True,timeout=60)
-        return ok(stdout=r.stdout[-2000:],stderr=r.stderr[-1000:],code=r.returncode)
+        return ok(stdout=r.stdout[-8000:],stderr=r.stderr[-1000:],code=r.returncode)
     if op=='run':
         if not args or args[0] not in ALLOW_BIN: return err('bin not allowed')
         if args[0]=='systemctl': return handle({'op':'systemctl','args':args[1:]})
@@ -5928,7 +5941,7 @@ Restart=on-failure
 RestartSec=3
 TimeoutStartSec=60
 LimitNOFILE=65535
-# v1.9.3: panel still root (compat). Helper socket is the allowlisted privileged path.
+# v1.9.4: panel still root (compat). Helper socket is the allowlisted privileged path.
 # Full User= drop planned after VM soak tests.
 NoNewPrivileges=false
 ProtectHome=read-only
@@ -6097,7 +6110,7 @@ CF=/etc/tunnel/config; LIB=/usr/local/lib/tunnel; PY=/opt/tunnel-panel/panel.py
 # Prefer versioned GitHub Releases. main is only a fallback when ALECSUI_ALLOW_MAIN=1.
 UPDATE_URL="${ALECSUI_UPDATE_URL:-https://api.github.com/repos/alecssdeveloper1/AlecsUI/releases/latest}"
 UPDATE_RAW_MAIN="https://raw.githubusercontent.com/alecssdeveloper1/AlecsUI/main/install.sh"
-ALECSUI_VER_INSTALLED="1.9.3"
+ALECSUI_VER_INSTALLED="1.9.4"
 G='\033[1;32m'; Y='\033[1;33m'; C='\033[1;36m'; N='\033[0m'
 . $CF
 myip(){ curl -4 -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}'; }
@@ -6394,7 +6407,7 @@ uninst(){
 while true; do
   cat <<T
 
-===== AlecsUI v1.9.3 MENU =====
+===== AlecsUI v1.9.4 MENU =====
    github.com/alecssdeveloper1/AlecsUI
 1) Uninstall
 2) Panel info

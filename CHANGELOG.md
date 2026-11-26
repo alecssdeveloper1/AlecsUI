@@ -4,6 +4,13 @@ All notable changes to AlecsUI are documented here. Format based on [Keep a Chan
 
 AlecsUI is a **modified** fork of ReXUI (Ali / chaliraza777), GPL-3.0.
 
+## [1.9.4] — 2026-11-26
+
+### Fixed
+- Server check false **"Not installed"** / **Xray · Stopped**: panel routed all `systemctl` via helper, which rejected `show` and `is-active --quiet`
+- Port conflict false positive: AlecsUI stunnel binary named `stunnel4` is now treated as ours
+- Helper allowlist: flags before unit (`--quiet`); larger stdout for status reads
+
 ## [1.9.3] — 2026-11-26
 
 ### Fixed
