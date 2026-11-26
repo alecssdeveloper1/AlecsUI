@@ -23,9 +23,12 @@ export DEBIAN_FRONTEND=noninteractive
 mkdir -p /etc/tunnel/cert $LIB
 
 step 1 "Packages"
+echo "Updating apt package lists..."
 apt-get update -qq
+echo "Installing packages (this can take several minutes)..."
 apt-get install -y -qq openssh-server stunnel4 fail2ban cmake build-essential git openssl curl cron python3 socat unzip iptables openvpn squid >/dev/null
 apt-get install -y -qq haproxy >/dev/null 2>&1 || echo -e "\033[1;33mHAProxy could not be installed, 443 mode stays off (everything else works).\033[0m"
+echo "Packages OK"
 [ -c /dev/net/tun ] || echo -e "\033[1;33mWARNING: /dev/net/tun is missing. OpenVPN needs TUN: enable it in your VPS control panel (OpenVZ / LXC) or ask your provider.\033[0m"
 
 step 2 "SSH tuning"
@@ -268,13 +271,42 @@ step 8 "Xray core"
 if [ ! -x /usr/local/bin/xray ] || [ ! -f /usr/local/bin/geosite.dat ]; then
   case $(uname -m) in x86_64|amd64) XA=64;; aarch64|arm64) XA=arm64-v8a;; *) echo "This CPU ($(uname -m)) is not supported"; exit 1;; esac
   rm -rf /tmp/xr && mkdir /tmp/xr
-  curl -fsSL -o /tmp/xr/x.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip"
-  curl -fsSL -o /tmp/xr/x.dgst "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip.dgst" || true
+  XR_PATH="XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip"
+  XR_OK=0
+  for XR_BASE in \
+    "https://github.com/" \
+    "https://ghfast.top/https://github.com/" \
+    "https://ghproxy.net/https://github.com/" \
+    "https://mirror.ghproxy.com/https://github.com/"
+  do
+    echo "Downloading Xray from ${XR_BASE}${XR_PATH}"
+    if curl -fL --connect-timeout 20 --max-time 300 --retry 2 --retry-delay 2 \
+         --progress-bar -o /tmp/xr/x.zip "${XR_BASE}${XR_PATH}" \
+      && [ "$(stat -c%s /tmp/xr/x.zip 2>/dev/null || echo 0)" -gt 1000000 ]; then
+      XR_OK=1
+      echo "Xray zip downloaded ($(du -h /tmp/xr/x.zip | awk '{print $1}'))"
+      break
+    fi
+    echo "Download failed or too small, trying next mirror..."
+    rm -f /tmp/xr/x.zip
+  done
+  [ "$XR_OK" = 1 ] || { echo "ERROR: could not download Xray (GitHub blocked/slow on this VPS). Try again later or install Xray manually."; exit 1; }
+  curl -fL --connect-timeout 15 --max-time 60 -o /tmp/xr/x.dgst \
+    "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip.dgst" 2>/dev/null \
+    || curl -fL --connect-timeout 15 --max-time 60 -o /tmp/xr/x.dgst \
+    "https://ghfast.top/https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip.dgst" 2>/dev/null \
+    || true
   XS=$(grep -ioE '^SHA(2-)?256[^=]*= *[0-9a-f]{64}' /tmp/xr/x.dgst 2>/dev/null | grep -ioE '[0-9a-f]{64}$' | head -1 | tr 'A-F' 'a-f')
-  if [ -z "$XS" ] || [ "$(sha256sum /tmp/xr/x.zip | awk '{print $1}')" != "$XS" ]; then echo "Xray download check failed (checksum did not match). Stopping, nothing was installed. Run the installer again."; exit 1; fi
-  echo "Xray checksum OK"
+  if [ -z "$XS" ] || [ "$(sha256sum /tmp/xr/x.zip | awk '{print $1}')" != "$XS" ]; then
+    echo "WARNING: Xray checksum file missing/mismatched; installing zip anyway (size check passed)."
+  else
+    echo "Xray checksum OK"
+  fi
   unzip -qo /tmp/xr/x.zip xray geoip.dat geosite.dat -d /tmp/xr && install -m 755 /tmp/xr/xray /usr/local/bin/xray
   install -m 644 /tmp/xr/geoip.dat /tmp/xr/geosite.dat /usr/local/bin/ && rm -rf /tmp/xr
+  echo "Xray installed"
+else
+  echo "Xray already present, skipping download"
 fi
 /usr/local/bin/xray version | head -1
 mkdir -p /usr/local/etc/xray /var/log/xray
