@@ -5213,6 +5213,15 @@ NEWPASS=""
 if [ ! -f /etc/tunnel/panel.json ]; then
   NEWPASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 12)
   python3 /opt/tunnel-panel/panel.py setlogin admin "$NEWPASS"
+  # Print NOW (not only at the end) — if a later step fails, the password is not lost
+  echo -e "\n\033[1;33m*** SAVE THIS LOGIN NOW ***\033[0m"
+  echo -e "Panel user : \033[1;32madmin\033[0m"
+  echo -e "Panel pass : \033[1;32m$NEWPASS\033[0m"
+  echo -e "\033[1;33m***************************\033[0m\n"
+  echo "admin / $NEWPASS" > /etc/tunnel/panel-login.txt
+  chmod 600 /etc/tunnel/panel-login.txt
+else
+  echo "Panel login already exists (unchanged). Reset with: menu -> 3  OR  python3 /opt/tunnel-panel/panel.py setlogin admin NEWPASS"
 fi
 cat > /etc/systemd/system/tunnel-panel.service <<S
 [Unit]
