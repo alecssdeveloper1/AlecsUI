@@ -1,5 +1,5 @@
 #!/bin/bash
-# AlecsUI v1.9.6 installer
+# AlecsUI v1.9.7 installer
 # Self-hosted SSH + Xray panel: SSH, SSL, SSH WebSocket (+TLS), UDPGW, Xray (VLESS XHTTP TLS / TCP TLS / Reality / XHTTP, Trojan), OpenVPN (TCP + HTTP proxy), Hysteria2 (UDP), WireGuard, DNS tunnel (dnstt) + V2Ray,
 # web panel with users, subscriptions, data and device limits, Telegram alerts, backups, 2FA, and a terminal menu.
 # Run as root on Ubuntu or Debian:  bash install.sh   (running it again updates AlecsUI and keeps users and settings)
@@ -9,7 +9,7 @@ set -e
 trap 'spin_stop 0 "Failed" "Eșec" 2>/dev/null || true; echo -e "\n\033[1;31mERROR / EROARE: line $LINENO\033[0m"' ERR
 [ "${EUID:-$(id -u)}" -ne 0 ] && { echo "Please run as root"; exit 1; }
 
-ALECSUI_VER=1.9.6
+ALECSUI_VER=1.9.7
 SSH_PORT_DEF=22
 SSL_PORT=443; WS_PORT=8880; WSTLS_PORT=2083; UDPGW_PORT=7300; VWSTLS_PORT=8443; VTCP_PORT=2053; VWS_PORT=8080; REALITY_PORT=8444; TROJAN_PORT=2096; OVPN1_PORT=1194; OVPN2_PORT=110; SQUID_PORT=3128; HY_PORT=443; HY_HOP=20000-30000; WG_PORT=51820; HYV=2.13.0; DNSTTV=v1.20240513.0
 # BadVPN tag 1.999.130 resolved commit (pinned; clone must match)
@@ -565,8 +565,15 @@ say "${CC}Preparing install…${C0}" "${CC}Pregătim instalarea…${C0}"
 [ -f /etc/tunnel/config ] && . /etc/tunnel/config
 [ -f "$CAPF" ] && . "$CAPF" 2>/dev/null || true
 if [ -z "${PANEL_PORT:-}" ]; then
-  PANEL_PORT=$(shuf -i 20000-59999 -n1)
-  while ! busy "$PANEL_PORT" tcp; do PANEL_PORT=$(shuf -i 20000-59999 -n1); done
+  # Prefer Cloudflare HTTPS ports so domain + orange cloud can reach the panel
+  PANEL_PORT=""
+  for c in 2053 8443 2083 2096 2087; do
+    if busy "$c" tcp; then PANEL_PORT=$c; break; fi
+  done
+  if [ -z "$PANEL_PORT" ]; then
+    PANEL_PORT=$(shuf -i 20000-59999 -n1)
+    while ! busy "$PANEL_PORT" tcp; do PANEL_PORT=$(shuf -i 20000-59999 -n1); done
+  fi
 fi
 [ -n "${WEB_PATH:-}" ] || WEB_PATH=$(tr -dc a-z0-9 </dev/urandom | head -c 10)
 pre_upgrade_backup
@@ -1712,7 +1719,8 @@ def _links(u):
         else: url='vless://%s@%s:%d?encryption=none&%s%s#%s'%(u['uuid'],A_,main,sq,tq,N)
         out.append((x['name'],url,alt))
     return out
-def sub_url(u): return 'https://%s:%s/sub/%s'%(certinfo()['domain'] or pub_addr(),E.get('PANEL_PORT',''),u['sub'])
+def sub_url(u):
+    pa=panel_access(); return 'https://%s:%s/sub/%s'%(pa['host'],pa['port'],u['sub'])
 def detail(n):
     u=next((x for x in uload() if x['name']==n),None)
     if not u: raise Err('User not found')
@@ -2923,6 +2931,19 @@ def dns_info(u=None):
 
 # ---------- CDN mode (Cloudflare) ----------
 CF_HTTPS=(443,2053,2083,2087,2096,8443); CF_HTTP=(80,8080,8880,2052,2082,2086,2095)
+def panel_access():
+    """Public panel URL + Cloudflare port warning (orange cloud only proxies CF_HTTPS)."""
+    ci=certinfo(); p=P('PANEL_PORT',0); path=(E.get('WEB_PATH','') or 'panel').strip('/')
+    ip=IPS.get('v4') or pub_addr() or local_ip(); dom=ci.get('domain') or ''
+    host=dom or ip; cf_ok=p in CF_HTTPS
+    url='https://%s:%d/%s/'%(host,p,path)
+    alt=('https://%s:%d/%s/'%(ip,p,path)) if dom and host!=ip else ''
+    note=''
+    if dom and not cf_ok:
+        note='Panel port %d is not a Cloudflare HTTPS port (%s). Orange cloud will block it — use DNS-only (grey cloud), or menu → Port change → Panel → 2053 or 8443.'%(p,', '.join(map(str,CF_HTTPS)))
+    elif not dom and not cf_ok:
+        note='Tip: for a domain behind Cloudflare, put the panel on %s (menu → Port change).'%('/'.join(map(str,CF_HTTPS[1:3])))
+    return {'url':url,'alt':alt,'note':note,'cf_ok':cf_ok or not bool(dom),'host':host,'port':p,'path':path}
 CF_NETS=('173.245.48.0/20','103.21.244.0/22','103.22.200.0/22','103.31.4.0/22','141.101.64.0/18','108.162.192.0/18','190.93.240.0/20','188.114.96.0/20',
          '197.234.240.0/22','198.41.128.0/17','162.158.0.0/15','104.16.0.0/13','104.24.0.0/14','172.64.0.0/13','131.0.72.0/22')
 def is_cf(ip):
@@ -3234,6 +3255,9 @@ def server_check():
     av,mt,sw=mi.get('MemAvailable',0),mi.get('MemTotal',1),mi.get('SwapTotal',0)
     add('ram','Memory','ok' if av>mt*0.1 else 'warn','%s free of %s%s.'%(fmt_b(av),fmt_b(mt),'' if sw else ', no swap'))
     if not s.get('tgtoken'): add('tg','Telegram alerts','warn','Off. Add a bot in Settings → Telegram to get alerts when something breaks.')
+    pa=panel_access()
+    if pa.get('note'):
+        add('panelport','Panel URL / Cloudflare','warn' if pa.get('cf_ok') else 'fail',pa['note'],None)
     # Kernel / virt capabilities (written by installer)
     cap={}
     try:
@@ -3781,7 +3805,7 @@ def state(uh=''):
     return {'info':dict(INFO,uptime=float(rd('/proc/uptime','0').split()[0]),puptime=time.time()-START),
             'cpu':S['cpu'],'ram':[m['MemTotal']-m['MemAvailable'],m['MemTotal']],'swap':[m.get('SwapTotal',0)-m.get('SwapFree',0),m.get('SwapTotal',0)],
             'disk':[du.used,du.total],'rx':S['rx'],'tx':S['tx'],'rxt':S['rxt'],'txt':S['txt'],'hist':H,'tcp':tc,'udp':uc,
-            'ip':IPS,'stats':stats(),'tools':TOOLS,'fs':FS['err'],'xup':XUP,'ddns':dict(DDNS,dom=sload()['ddns_dom']),'stime':time.strftime('%H:%M %Z'),'svc':services(),'xray':xinfo(),'proc':procinfo(),'online':online(),'ibs':ib_view(),'backups':sorted(os.listdir(BKD))[::-1] if os.path.isdir(BKD) else [],**ustate_part(uh),'cert':certinfo(),'set':dict({k:v for k,v in sload().items() if k not in ('rpriv','tgtoken','ddns_tok')},tgmask=mask(sload()['tgtoken']),ddmask=mask(sload()['ddns_tok'])),'tfa':bool(lread().get('totp')),'warp':warp_info(),'geo':geo_ok(),'addr':pub_addr(),'me':curuser(),'ov':ov_on(),'hy':hy_on(),'wg':wg_on(),'dns':dns_info(),'cdn':cdn_info(),'pays':pay_load(),'pvals':pay_vals(),'h443':h_info(),
+            'ip':IPS,'stats':stats(),'tools':TOOLS,'fs':FS['err'],'xup':XUP,'ddns':dict(DDNS,dom=sload()['ddns_dom']),'stime':time.strftime('%H:%M %Z'),'svc':services(),'xray':xinfo(),'proc':procinfo(),'online':online(),'ibs':ib_view(),'backups':sorted(os.listdir(BKD))[::-1] if os.path.isdir(BKD) else [],**ustate_part(uh),'cert':certinfo(),'panel':panel_access(),'set':dict({k:v for k,v in sload().items() if k not in ('rpriv','tgtoken','ddns_tok')},tgmask=mask(sload()['tgtoken']),ddmask=mask(sload()['ddns_tok'])),'tfa':bool(lread().get('totp')),'warp':warp_info(),'geo':geo_ok(),'addr':pub_addr(),'me':curuser(),'ov':ov_on(),'hy':hy_on(),'wg':wg_on(),'dns':dns_info(),'cdn':cdn_info(),'pays':pay_load(),'pvals':pay_vals(),'h443':h_info(),
             'port':E.get('PANEL_PORT',''),'path':E.get('WEB_PATH',''),'ports':dict({k:v for k,v in E.items() if k.endswith('_PORT')},REALITY_PORT=str(P('REALITY_PORT',8444)),TROJAN_PORT=str(P('TROJAN_PORT',2096)),OVPN1_PORT=str(P('OVPN1_PORT',1194)),OVPN2_PORT=str(P('OVPN2_PORT',110)),SQUID_PORT=str(P('SQUID_PORT',3128)),HY_PORT=str(hyport()),WG_PORT=str(wgport()),HY_HOP='%d-%d'%hyhop() if hyhop() else '')}
 
 # ---------- stats: server traffic, protocols, top users ----------
@@ -4914,9 +4938,9 @@ a.btn{text-decoration:none;color:var(--t)}a.btn.pri{color:#fff}
 <label for="lp">Password</label><div class="fi"><span data-i="lock"></span><input id="lp" type="password" autocomplete="current-password"><button type="button" class="ib" id="lpe" aria-label="Show password"></button></div>
 <div id="lcw" hidden><label for="lc">6-digit code from your authenticator app</label><div class="fi"><span data-i="shield"></span><input id="lc" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div></div>
 <div id="capw" hidden><label for="lcap">Type the letters from the picture</label><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><img id="capi" alt="Security check picture" width="200" height="64" style="border-radius:8px;max-width:100%"><button type="button" class="ib" id="capr" aria-label="Show a new picture"></button></div><div class="fi"><span data-i="shield"></span><input id="lcap" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="8"></div></div>
-<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.6</p></form></div>
-<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.6</a></aside>
-<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.6</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.6</a></main><nav id="bn" aria-label="Main"></nav></div>
+<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.7</p></form></div>
+<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.7</a></aside>
+<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.7</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.7</a></main><nav id="bn" aria-label="Main"></nav></div>
 <div id="dt" hidden><div class="dts"><div class="dth"><b>User details</b><button class="btn sm" id="dx" aria-label="Close">Close</button></div><div id="dtb"></div></div></div>
 <div id="md" hidden><form class="card" id="mf"></form></div>
 <div id="sxo" hidden><div class="sxp" role="dialog" aria-label="Search"><div class="fi"><span data-i="search"></span><input id="sxi" placeholder="Search users, settings, tools..." autocomplete="off" spellcheck="false" aria-label="Search"><button type="button" class="btn sm" id="sxx">Esc</button></div><div id="sxr" role="listbox"></div></div></div>
@@ -5192,7 +5216,7 @@ ${usageCard(u.hist)}
 ${onlineCard(u)}
 ${hx||u.kind=='hy2'?'':`<div class="card"><div class="lab">User page</div><p class="note">Send this link to the user. ${u.kind=='dns'?'It shows their usage, expiry and the DNS tunnel details.':u.kind=='wg'?'It shows their usage, expiry, the WireGuard QR and the .conf file.':u.kind=='ovpn'?'It shows their usage, expiry and the OpenVPN file download.':'It shows their usage, expiry, SSH details and payloads.'}</p>${cbox('User page',u.sub,false)}<a class="btn sm" href="${X(u.sub)}" target="_blank" rel="noopener" style="margin-top:10px;text-decoration:none">Open user page</a></div>`}
 ${hx?`<div class="card"><div class="ct"><div class="lab">Subscription link</div><button class="btn sm" data-ua="newsub">${I('refresh',14)}New link</button></div><p class="note">Import into v2rayNG, NekoBox or Hiddify. It contains this user's V2Ray configs (the inbounds they have) and shows usage and expiry.</p>${cbox('Subscription',u.sub)}<a class="btn sm" href="${X(u.sub)}" target="_blank" rel="noopener" style="margin-top:10px;text-decoration:none">Open user page</a></div>
-<div class="card"><div class="ct"><div class="lab">Xray configs</div><button class="btn sm" data-ua="newuuid">${I('refresh',14)}New UUID</button></div><p class="note">Tap a config to copy it. XHTTP needs a recent app (v2rayNG 1.9.60+, Hiddify, NekoBox with Xray core).</p>${u.links.map(l=>cbox(l.name+(l.alt?' · port '+(l.url.match(/:(\d+)\?/)||[])[1]+' (or '+l.alt+')':''),l.url)+(l.name=='VLESS XHTTP (no TLS)'&&!u.plaindomain?'<p class="note bad" style="margin-top:6px">New Xray apps refuse VLESS without TLS on an IP address. Set a domain (Settings → Server address, or a domain certificate) to use this config.</p>':'')).join('')}</div>
+<div class="card"><div class="ct"><div class="lab">Xray configs</div><button class="btn sm" data-ua="newuuid">${I('refresh',14)}New UUID</button></div><p class="note">Tap a config to copy it. XHTTP needs a recent app (v2rayNG 1.9.70+, Hiddify, NekoBox with Xray core).</p>${u.links.map(l=>cbox(l.name+(l.alt?' · port '+(l.url.match(/:(\d+)\?/)||[])[1]+' (or '+l.alt+')':''),l.url)+(l.name=='VLESS XHTTP (no TLS)'&&!u.plaindomain?'<p class="note bad" style="margin-top:6px">New Xray apps refuse VLESS without TLS on an IP address. Set a domain (Settings → Server address, or a domain certificate) to use this config.</p>':'')).join('')}</div>
 `:''}
 ${hs?`<div class="card"><div class="ct"><div class="lab">SSH account</div><button class="btn sm" data-cp="${cp(sshAll)}">Copy all</button></div>
 ${row('Host',u.addr)}${row('Username',u.name)}${row('Password',u.pw||'Unknown (set a new one with Edit)')}${row('SSH',p.SSH_PORT)}${row('SSH SSL / TLS',AP(u,'SSL_PORT'))}${row('SSH WS',AP(u,'WS_PORT'))}${row('SSH WS TLS',AP(u,'WSTLS_PORT'))}${row('UDPGW','127.0.0.1:'+p.UDPGW_PORT)}</div>
@@ -5360,7 +5384,7 @@ function tools(){tools2();const t=D.tools,sp=t.speed;if(!$('#spr'))return;$('#st
 $('#spr').innerHTML=sp.run?'<p class="note">Testing... this takes about 20 seconds.</p>':sp.t?(sp.err?`<p class="err">${X(sp.err)}</p>`:`<div class="tl3"><div class="tile"><b>${mbps(sp.down)}</b><small>DOWNLOAD</small></div><div class="tile"><b>${mbps(sp.up)}</b><small>UPLOAD</small></div><div class="tile"><b>${sp.ping??'-'}</b><small>PING ms</small></div></div>${sp.srv?`<div class="kv" style="margin-top:8px"><span>Test server</span><b>${X(sp.srv)}</b></div>`:''}${sp.isp?`<div class="kv"><span>Provider</span><b>${X(sp.isp)}</b></div>`:''}${sp.jit!=null?`<div class="kv"><span>Jitter · packet loss</span><b>${sp.jit} ms · ${sp.loss!=null?(+sp.loss).toFixed(1)+' %':'-'}</b></div>`:''}${sp.note?`<p class="note" style="margin-top:6px">${X(sp.note)}</p>`:''}<p class="note" style="margin-top:6px">Tested ${tago(sp.t)}</p>`):'';
 $('#spb').disabled=!!sp.run}
 function stb(){tools();featTick();const b=$('#bkl');if(!b)return;const L=D.backups||[];b.innerHTML=L.length?`<p class="note" style="margin:12px 0 0">Automatic daily backups on the server (last 7): ${L.map(X).join(', ')}. Restore one with <b style="color:var(--t)">menu</b> → Backup / Restore.</p>`:''}
-function st(){const d=D,c=d.cert,s=d.set,p=d.ports,url=`https://${c.domain||location.hostname}:${d.port}/${d.path}/`;
+function st(){const d=D,c=d.cert,s=d.set,p=d.ports,pa=d.panel||{},url=pa.url||`https://${c.domain||location.hostname}:${d.port}/${d.path}/`;
 const kv=(k,v)=>`<div class="kv"><span>${k}</span><b>${X(v)}</b></div>`;
 const SG=[['general','General',[['general','General']]],['proto','Protocols',[['xray','Xray'],['cdn','CDN'],['ovpn','OpenVPN'],['hy2','UDP'],['wg','WireGuard'],['dns','DNS']]],['users','Users',[['sub','Sub page'],['pay','Payloads']]],['net','Network ports',[['ports','Ports and 443 mode']]],['alerts','Telegram alerts',[['telegram','Telegram']]],['server','Server',[['check','Server check'],['tools','Tools'],['backup','Backup'],['logs','Logs']]]],ST=SG.flatMap(g=>g[2].map(t=>[t[0],t[1],g[0]]));
 $('#pg').innerHTML=`<div class="stabs" role="tablist" aria-label="Settings sections">${SG.map(g=>`<button type="button" role="tab" data-sg="${g[0]}">${g[1]}</button>`).join('')}</div><div class="ssub" role="tablist" aria-label="Section parts">${ST.map(t=>`<button type="button" role="tab" data-stab="${t[0]}" data-g="${t[2]}">${t[1]}</button>`).join('')}</div><div class="sg"><div class="card tabx gl" id="glc"><div class="lab">${I('gear',15)}General settings</div><div class="gll">${GL.map(g=>`<button type="button" class="glr" data-gs="${g[0]}">${I(g[2],18)}<span><b>${g[1]}</b><small>${g[3]}</small></span><span class="gla" aria-hidden="true">›</span></button>`).join('')}</div></div><div class="tabx glb" id="glb"><button type="button" class="btn sm" id="glback">‹ All general settings</button></div>
@@ -5523,9 +5547,10 @@ ${d.h443.err&&!d.h443.on?`<p class="note bad" style="margin-top:8px">${X(d.h443.
 <p class="note">Checks services, Xray config, certificate, domains and DNS records, OpenVPN network, firewall, ports, time, disk and memory. Problems that the panel can fix get a Fix button.</p><div id="ckr"></div></div>
 <div class="card" id="pfc"><div class="lab">${I('bolt',15)}Performance mode</div><p class="note" style="margin-top:8px">Network tuning for the whole server. Changes apply right away, nobody is disconnected.</p>
 <div class="pfm" id="pfm" role="radiogroup" aria-label="Performance mode">${[['latency','Low ping','Gaming, calls, browsing. Small buffers, fast replies.'],['balanced','Balanced','Best for most servers with many users.'],['throughput','Max speed','Downloads and streaming on a fast server. Uses more memory.']].map(m=>`<button type="button" role="radio" data-pm="${m[0]}" aria-checked="${(s.perf||'balanced')==m[0]}"><b>${m[1]}</b><small>${m[2]}</small></button>`).join('')}</div></div>
-<div class="card" id="ppc"><div class="lab">${I('shield',15)}Panel and ports</div>${kv('URL',url)}${kv('Secret path','/'+d.path+'/')}
+<div class="card" id="ppc"><div class="lab">${I('shield',15)}Panel and ports</div>${kv('URL',url)}${pa.alt?kv('IP URL (fallback)',pa.alt):''}${kv('Secret path','/'+d.path+'/')}
+${pa.note?`<p class="note bad" style="margin-top:8px">${X(pa.note)}</p>`:''}
 ${[['Panel','PANEL_PORT'],['SSH','SSH_PORT'],['SSH SSL','SSL_PORT'],['SSH WS','WS_PORT'],['SSH WS TLS','WSTLS_PORT'],['UDPGW','UDPGW_PORT'],['VLESS XHTTP TLS','VWSTLS_PORT'],['VLESS TCP TLS','VTCP_PORT'],['Trojan TLS','TROJAN_PORT'],['VLESS Reality','REALITY_PORT'],['VLESS XHTTP','VWS_PORT']].map(x=>kv(x[0],p[x[1]]||'-')).join('')}
-<p class="note" style="margin-top:12px">To change a port, run <b style="color:var(--t)">menu</b> on the server and open Port change.</p></div></div>`;
+<p class="note" style="margin-top:12px">To change a port, run <b style="color:var(--t)">menu</b> on the server and open Port change. Cloudflare orange cloud only allows panel on 443 / 2053 / 2083 / 2087 / 2096 / 8443.</p></div></div>`;
 const TM={cf:'general',xf:'xray',rf:'general',fsc:'general',rfc:'xray',pf:'general',ovsf:'ovpn',hysc:'hy2',wgsc:'wg',dnsf:'dns',apf:'general',pwc:'general',ppc:'general',pac:'general',af:'telegram',spf:'sub',tf:'tools',xuc:'tools',ddc:'tools',mtc:'tools',bkc:'backup',lgc:'logs',cdnf:'cdn',payc:'pay',payf:'pay',prc:'ports',h4c:'ports',ckc:'check',pfc:'general'};
 const stab=t=>{const x=ST.find(x=>x[0]==t)||ST[0];t=x[0];const g=x[2],one=SG.find(y=>y[0]==g)[2].length<2;LSG[g]=t;ls('rx-stab',t);document.querySelectorAll('[data-sg]').forEach(b=>{const on=b.dataset.sg==g;b.classList.toggle('on',on);b.setAttribute('aria-selected',on)});$('.ssub').hidden=one;document.querySelectorAll('[data-stab]').forEach(b=>{const on=b.dataset.stab==t;b.hidden=b.dataset.g!=g;b.classList.toggle('on',on);b.setAttribute('aria-selected',on)});
 Object.entries(TM).forEach(([id,tb])=>{const el=$('#'+id);if(el)el.classList.toggle('tabx',tb!=t||(t=='general'&&GSEL!=id))});$('#glc').classList.toggle('tabx',t!='general'||!!GSEL);$('#glb').classList.toggle('tabx',t!='general'||!GSEL);if(t=='tools')mload();if(t=='logs')lview();if(t=='ports')portsLoad();if(t=='check'&&!$('#ckr').innerHTML)checkRun()};window.STAB=stab;
@@ -5944,7 +5969,7 @@ Restart=on-failure
 RestartSec=3
 TimeoutStartSec=60
 LimitNOFILE=65535
-# v1.9.6: panel still root (compat). Helper socket is the allowlisted privileged path.
+# v1.9.7: panel still root (compat). Helper socket is the allowlisted privileged path.
 # Full User= drop planned after VM soak tests.
 NoNewPrivileges=false
 ProtectHome=read-only
@@ -6134,6 +6159,16 @@ domcert(){
   }
   echo "$err" | tail -5
   inst "$dm" domain
+  echo
+  echo "Panel access after cert:"
+  . /etc/tunnel/config 2>/dev/null || true
+  echo "  https://$dm:${PANEL_PORT:-?}/${WEB_PATH:-}/"
+  case "${PANEL_PORT:-}" in
+    443|2053|2083|2087|2096|8443) echo "  Port OK for Cloudflare orange cloud.";;
+    *) echo "  WARN: panel port ${PANEL_PORT} is NOT a Cloudflare HTTPS port."
+       echo "  Use DNS-only (grey cloud) OR: menu → 5 → Panel → 2053 or 8443"
+       echo "  IP fallback: https://$(myip):${PANEL_PORT}/${WEB_PATH}/";;
+  esac
 }
 own(){
   echo "1) File path  2) Paste"; read -rp "Option: " m
@@ -6182,11 +6217,27 @@ CF=/etc/tunnel/config; LIB=/usr/local/lib/tunnel; PY=/opt/tunnel-panel/panel.py
 # Prefer versioned GitHub Releases. main is only a fallback when ALECSUI_ALLOW_MAIN=1.
 UPDATE_URL="${ALECSUI_UPDATE_URL:-https://api.github.com/repos/alecssdeveloper1/AlecsUI/releases/latest}"
 UPDATE_RAW_MAIN="https://raw.githubusercontent.com/alecssdeveloper1/AlecsUI/main/install.sh"
-ALECSUI_VER_INSTALLED="1.9.6"
+ALECSUI_VER_INSTALLED="1.9.7"
 G='\033[1;32m'; Y='\033[1;33m'; C='\033[1;36m'; N='\033[0m'
 . $CF
 myip(){ curl -4 -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}'; }
-url(){ local H; H=$(myip); if [ -f /etc/tunnel/cert/info ]; then NAME=; . /etc/tunnel/cert/info; [[ $NAME =~ [a-z] && $NAME != \** ]] && H=$NAME; fi; echo "https://$H:$PANEL_PORT/$WEB_PATH/"; }
+# Cloudflare proxied HTTPS ports only — random high ports (e.g. 46026) fail behind orange cloud
+cf_https_port(){ case "$1" in 443|2053|2083|2087|2096|8443) return 0;; *) return 1;; esac; }
+url(){
+  local IP NAME="" H
+  . $CF 2>/dev/null || true
+  IP=$(myip); H=$IP
+  if [ -f /etc/tunnel/cert/info ]; then
+    NAME=; . /etc/tunnel/cert/info
+    if [[ ${NAME:-} =~ [a-z] && $NAME != \** ]]; then H=$NAME; fi
+  fi
+  echo "https://$H:$PANEL_PORT/$WEB_PATH/"
+  if [[ ${NAME:-} =~ [a-z] ]] && [ "$H" = "$NAME" ] && ! cf_https_port "$PANEL_PORT"; then
+    echo -e "${Y}WARN: port $PANEL_PORT is NOT a Cloudflare HTTPS port.${N}"
+    echo -e "${Y}  Orange cloud will fail. Use DNS-only (grey) OR: menu → 5 → Panel → 2053/8443${N}"
+    echo -e "${Y}  IP fallback: https://$IP:$PANEL_PORT/$WEB_PATH/${N}"
+  fi
+}
 on(){ systemctl is-active --quiet "$1" && echo -e "${G}ON${N}" || echo -e "${Y}OFF${N}"; }
 fw(){ if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then ufw allow "$1"/tcp >/dev/null; fi; }
 fwu(){ if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then ufw allow "$1"/udp >/dev/null; fi; }
@@ -6479,7 +6530,7 @@ uninst(){
 while true; do
   cat <<T
 
-===== AlecsUI v1.9.6 MENU =====
+===== AlecsUI v1.9.7 MENU =====
    github.com/alecssdeveloper1/AlecsUI
 1) Uninstall
 2) Panel info
@@ -6562,7 +6613,8 @@ sleep 6
 for i in $(seq 20); do systemctl is-active --quiet xray && break; sleep 1; done
 R=$(timeout 4 bash -c "exec 3<>/dev/tcp/127.0.0.1/$WS_PORT; printf 'GET / HTTP/1.1\r\nHost: x\r\n\r\n' >&3; head -c 12 <&3" 2>/dev/null || true)
 PH=$(curl -4 -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}')
-if [ -f /etc/tunnel/cert/info ]; then NAME=; . /etc/tunnel/cert/info; [[ $NAME =~ [a-z] && $NAME != \** ]] && PH=$NAME; fi
+PIP=$PH; PNAME=""
+if [ -f /etc/tunnel/cert/info ]; then NAME=; . /etc/tunnel/cert/info; [[ $NAME =~ [a-z] && $NAME != \** ]] && { PH=$NAME; PNAME=$NAME; }; fi
 spin_stop 1 "Services started" "Servicii pornite"
 ui_finish "$PH" "$R"
 for s in ssh alecsui-stunnel ws-ssh badudp xray fail2ban tunnel-panel alecsui-helper alecsui-ovpn@rx1194 alecsui-ovpn@rx110 squid alecsui-hy2 alecsui-wg alecsui-dns; do
@@ -6577,6 +6629,15 @@ echo "  OpenVPN TCP $OVPN1_PORT,$OVPN2_PORT | Squid $SQUID_PORT | Hy2 UDP $HY_PO
 msg "  WS test: ${R:-fail}" "  Test WS: ${R:-fail}"
 echo
 msg "${CG}${CB}Panel:${C0}  https://$PH:$PANEL_PORT/$WEB_PATH/" "${CG}${CB}Panou:${C0}  https://$PH:$PANEL_PORT/$WEB_PATH/"
+case "$PANEL_PORT" in
+  443|2053|2083|2087|2096|8443) ;;
+  *)
+    if [ -n "$PNAME" ]; then
+      warn "Port $PANEL_PORT is not Cloudflare-safe. Grey cloud OR change panel to 2053/8443. IP: https://$PIP:$PANEL_PORT/$WEB_PATH/" \
+           "Portul $PANEL_PORT nu e compatibil Cloudflare. Cloud gri SAU schimba panoul pe 2053/8443. IP: https://$PIP:$PANEL_PORT/$WEB_PATH/"
+    fi
+    ;;
+esac
 if [ -n "$NEWPASS" ]; then
   msg "${CY}${CB}Login:${C0}  admin / $NEWPASS  ${CD}(save now — not stored in plaintext)${C0}"       "${CY}${CB}Login:${C0}  admin / $NEWPASS  ${CD}(salvează acum — nu e păstrat în plaintext)${C0}"
 else

@@ -4,6 +4,13 @@ All notable changes to AlecsUI are documented here. Format based on [Keep a Chan
 
 AlecsUI is a **modified** fork of ReXUI (Ali / chaliraza777), GPL-3.0.
 
+## [1.9.7] — 2026-11-26
+
+### Fixed
+- Panel URL: warn when port is not Cloudflare HTTPS (46026 etc. fails behind orange cloud); show IP fallback
+- New installs prefer panel ports **2053/8443/2083…** (CF-compatible) instead of random high ports
+- Server check + menu + Settings show Cloudflare port guidance after domain cert
+
 ## [1.9.6] — 2026-11-26
 
 ### Fixed
