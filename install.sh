@@ -1,87 +1,489 @@
 #!/bin/bash
-# AlecsUI v1.8 installer
+# AlecsUI v1.9.2 installer
 # Self-hosted SSH + Xray panel: SSH, SSL, SSH WebSocket (+TLS), UDPGW, Xray (VLESS XHTTP TLS / TCP TLS / Reality / XHTTP, Trojan), OpenVPN (TCP + HTTP proxy), Hysteria2 (UDP), WireGuard, DNS tunnel (dnstt) + V2Ray,
 # web panel with users, subscriptions, data and device limits, Telegram alerts, backups, 2FA, and a terminal menu.
 # Run as root on Ubuntu or Debian:  bash install.sh   (running it again updates AlecsUI and keeps users and settings)
 # https://github.com/alecssdeveloper1/AlecsUI · License: GPL-3.0 · fork of ReXUI by Ali (chaliraza777) · maintained by Alecs (alecssdeveloper1)
+# Modified from ReXUI — see CHANGELOG.md and NOTICE.
 set -e
-trap 'echo -e "\n\033[1;31mERROR: failed at line $LINENO\033[0m"' ERR
-[ "$EUID" -ne 0 ] && { echo "Please run as root"; exit 1; }
+trap 'spin_stop 0 "Failed" "Eșec" 2>/dev/null || true; echo -e "\n\033[1;31mERROR / EROARE: line $LINENO\033[0m"' ERR
+[ "${EUID:-$(id -u)}" -ne 0 ] && { echo "Please run as root"; exit 1; }
+
+ALECSUI_VER=1.9.2
 SSH_PORT_DEF=22
 SSL_PORT=443; WS_PORT=8880; WSTLS_PORT=2083; UDPGW_PORT=7300; VWSTLS_PORT=8443; VTCP_PORT=2053; VWS_PORT=8080; REALITY_PORT=8444; TROJAN_PORT=2096; OVPN1_PORT=1194; OVPN2_PORT=110; SQUID_PORT=3128; HY_PORT=443; HY_HOP=20000-30000; WG_PORT=51820; HYV=2.13.0; DNSTTV=v1.20240513.0
+# BadVPN tag 1.999.130 resolved commit (pinned; clone must match)
+BADVPN_COMMIT=752c6b492bc6866e8af8313a6e348d5e0370fe1f
+ACME_VER=3.1.0
 LIB=/usr/local/lib/tunnel
 XRAY_VER=v26.11.9
-step(){ echo -e "\n\033[1;36m[$1/11]\033[0m $2"; }
-# Foreign process on port = fail. Our stack (stunnel/xray/...) is allowed and cleaned before restart.
-busy(){ if ss -lntp 2>/dev/null | grep -E ":$1\b" | grep -Eiv 'stunnel|python3|xray|squid|openvpn|haproxy|udpgw|tunnel-panel' >/dev/null; then echo "Port $1 is already in use by another program:"; ss -lntp | grep -E ":$1\b"; exit 1; fi; }
-# Stop our stunnel cleanly so reinstall does not hit "Address already in use" on 443/2083
-stunnel_stop_clean(){
-  echo "Preparing stunnel4 (stop old process, free ports $SSL_PORT / $WSTLS_PORT)..."
-  systemctl stop stunnel4 2>/dev/null || true
-  service stunnel4 stop 2>/dev/null || true
-  # Orphan stunnel left after failed systemd restart
-  if ss -lntp 2>/dev/null | grep -E ":($SSL_PORT|$WSTLS_PORT)\b" | grep -qi stunnel; then
-    echo "Old stunnel still holds SSL/WS-TLS port, stopping it..."
-    pkill -TERM -x stunnel4 2>/dev/null || true
-    sleep 2
+LOCKF=/run/alecsui-install.lock
+CAPF=/etc/tunnel/capabilities
+MANIFEST=/etc/tunnel/manifest.json
+ORIGD=/etc/tunnel/originals
+ALECSUI_STUNNEL_CONF=/etc/alecsui/stunnel.conf
+ALECSUI_STUNNEL_PEM=/etc/alecsui/stunnel.pem
+ALECSUI_STUNNEL_UNIT=alecsui-stunnel
+SSH_GROUP=alecsui-ssh
+OUR_UNITS='alecsui-stunnel|xray|ws-ssh|badudp|tunnel-panel|alecsui-helper|haproxy|squid|alecsui-ovpn@|alecsui-hy2|alecsui-wg|alecsui-dns|fail2ban'
+OUR_BINS='stunnel|xray|openvpn|squid|haproxy|hysteria|dnstt-server|badvpn-udpgw'
+
+
+# ---------- Installer UI (bilingual RO/EN + colors + progress) ----------
+C0='\033[0m'; CB='\033[1m'; CD='\033[2m'
+CR='\033[1;31m'; CG='\033[1;32m'; CY='\033[1;33m'; CC='\033[1;36m'; CM='\033[1;35m'; CW='\033[1;37m'
+CL='\033[1;94m'; CT='\033[1;96m'
+SPIN_PID=''
+UI_LANG="${ALECSUI_LANG:-}"
+
+ui_pick_lang(){
+  if [ -n "$UI_LANG" ]; then return; fi
+  case "${LANG:-}${LC_ALL:-}${LC_MESSAGES:-}" in
+    ro*|RO*) UI_LANG=ro;;
+    *) UI_LANG=en;;
+  esac
+  if [ -t 0 ] && [ -t 1 ]; then
+    echo
+    echo -e "  ${CT}${CB}AlecsUI installer / Instalator${C0}"
+    echo -e "  ${CD}1) English   2) Română${C0}"
+    read -rp "  Language / Limbă [1/2] (default: $UI_LANG): " _ans || true
+    case "${_ans:-}" in
+      2|ro|RO|r|R) UI_LANG=ro;;
+      1|en|EN|e|E) UI_LANG=en;;
+    esac
   fi
-  if ss -lntp 2>/dev/null | grep -E ":($SSL_PORT|$WSTLS_PORT)\b" | grep -qi stunnel; then
-    pkill -KILL -x stunnel4 2>/dev/null || true
-    sleep 1
-  fi
-  mkdir -p /var/run/stunnel4 /run/stunnel4
-  if id stunnel4 >/dev/null 2>&1; then chown stunnel4:stunnel4 /var/run/stunnel4 /run/stunnel4 2>/dev/null || true; fi
-  chmod 755 /var/run/stunnel4 /run/stunnel4 2>/dev/null || true
+  export UI_LANG
 }
+
+# msg "english" "română"
+msg(){
+  if [ "${UI_LANG:-en}" = ro ]; then echo -e "$2"; else echo -e "$1"; fi
+}
+
+ui_banner(){
+  clear 2>/dev/null || true
+  echo -e "${CT}"
+  cat <<'BAN'
+     █████╗ ██╗     ███████╗ ██████╗███████╗██╗   ██╗██╗
+    ██╔══██╗██║     ██╔════╝██╔════╝██╔════╝██║   ██║██║
+    ███████║██║     █████╗  ██║     ███████╗██║   ██║██║
+    ██╔══██║██║     ██╔══╝  ██║     ╚════██║██║   ██║██║
+    ██║  ██║███████╗███████╗╚██████╗███████║╚██████╔╝██║
+    ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝╚══════╝ ╚═════╝ ╚═╝
+BAN
+  echo -e "${C0}"
+  echo -e "  ${CM}${CB}v${ALECSUI_VER}${C0}  ${CD}· Open Source VPN Panel · GPL-3.0${C0}"
+  echo -e "  ${CD}github.com/alecssdeveloper1/AlecsUI${C0}"
+  echo
+  if [ "${UI_LANG}" = ro ]; then
+    echo -e "  ${CG}▶${C0} Instalare animată · mesaje RO/EN · Ubuntu 20–26 / Debian 11+"
+  else
+    echo -e "  ${CG}▶${C0} Animated install · RO/EN messages · Ubuntu 20–26 / Debian 11+"
+  fi
+  echo -e "  ${CD}──────────────────────────────────────────────────${C0}"
+  echo
+}
+
+os_check(){
+  local id ver pretty major
+  # shellcheck disable=SC1091
+  [ -f /etc/os-release ] && . /etc/os-release
+  id=${ID:-unknown}; ver=${VERSION_ID:-0}; pretty=${PRETTY_NAME:-$id $ver}
+  major=${ver%%.*}
+  msg "${CC}OS check:${C0} $pretty" "${CC}Verificare OS:${C0} $pretty"
+  case "$id" in
+    ubuntu)
+      if [ "$major" -ge 20 ] && [ "$major" -le 26 ] 2>/dev/null; then
+        msg "${CG}✓ Ubuntu $ver supported (20–26).${C0}" "${CG}✓ Ubuntu $ver suportat (20–26).${C0}"
+      else
+        msg "${CY}! Ubuntu $ver is outside the tested range 20–26. Continuing anyway…${C0}" \
+            "${CY}! Ubuntu $ver e în afara intervalului testat 20–26. Continuăm…${C0}"
+      fi
+      ;;
+    debian)
+      if [ "$major" -ge 11 ] 2>/dev/null; then
+        msg "${CG}✓ Debian $ver supported (11+).${C0}" "${CG}✓ Debian $ver suportat (11+).${C0}"
+      else
+        msg "${CR}✗ Debian $ver is too old. Need Debian 11+.${C0}" "${CR}✗ Debian $ver e prea vechi. Trebuie Debian 11+.${C0}"
+        exit 1
+      fi
+      ;;
+    *)
+      msg "${CY}! Distro '$id' is not officially listed. Ubuntu/Debian recommended.${C0}" \
+          "${CY}! Distro '$id' nu e pe lista oficială. Recomandat Ubuntu/Debian.${C0}"
+      ;;
+  esac
+}
+
+spin_start(){
+  local tip="$1"
+  [ -t 1 ] || { echo -e "  ${CD}$tip${C0}"; return; }
+  (
+    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i=0
+    while true; do
+      printf "\r  ${CT}%s${C0} ${CW}%s${C0}   " "${frames:i++%10:1}" "$tip"
+      sleep 0.08
+    done
+  ) &
+  SPIN_PID=$!
+  disown 2>/dev/null || true
+}
+
+spin_stop(){
+  local ok="${1:-1}" done_en="${2:-Done}" done_ro="${3:-Gata}"
+  if [ -n "${SPIN_PID:-}" ] && kill -0 "$SPIN_PID" 2>/dev/null; then
+    kill "$SPIN_PID" 2>/dev/null || true
+    wait "$SPIN_PID" 2>/dev/null || true
+  fi
+  SPIN_PID=''
+  [ -t 1 ] && printf "\r\033[K"
+  if [ "$ok" = 1 ]; then
+    msg "  ${CG}✓${C0} ${CB}$done_en${C0}" "  ${CG}✓${C0} ${CB}$done_ro${C0}"
+  else
+    msg "  ${CY}!${C0} ${CB}$done_en${C0}" "  ${CY}!${C0} ${CB}$done_ro${C0}"
+  fi
+}
+
+# Progress bar for step n/total
+ui_bar(){
+  local n="$1" total="${2:-11}" width=28
+  local filled=$(( n * width / total )) empty=$(( width - filled ))
+  local bar
+  bar=$(printf "%${filled}s" | tr ' ' '█')$(printf "%${empty}s" | tr ' ' '░')
+  printf "  ${CM}[%s]${C0} ${CD}%d/%d${C0}\n" "$bar" "$n" "$total"
+}
+
+# step N "English title" "Titlu română"
+step(){
+  local n="$1" en="$2" ro="${3:-$2}"
+  echo
+  ui_bar "$n" 11
+  if [ "${UI_LANG:-en}" = ro ]; then
+    echo -e "  ${CT}${CB}Pasul $n/11${C0}  ${CW}$ro${C0}"
+  else
+    echo -e "  ${CT}${CB}Step $n/11${C0}  ${CW}$en${C0}"
+  fi
+  echo -e "  ${CD}········································${C0}"
+}
+
+say(){ msg "  $1" "  $2"; }
+ok(){ msg "  ${CG}✓${C0} $1" "  ${CG}✓${C0} $2"; }
+warn(){ msg "  ${CY}!${C0} $1" "  ${CY}!${C0} $2"; }
+errx(){ msg "  ${CR}✗${C0} $1" "  ${CR}✗${C0} $2"; }
+
+ui_finish(){
+  local ph="$1" r="$2"
+  echo
+  echo -e "${CG}"
+  cat <<'OK'
+   ╔══════════════════════════════════════════╗
+   ║          ★  INSTALL COMPLETE  ★          ║
+   ║          ★  INSTALARE COMPLETĂ  ★        ║
+   ╚══════════════════════════════════════════╝
+OK
+  echo -e "${C0}"
+  msg "${CB}AlecsUI v${ALECSUI_VER} — service status${C0}" "${CB}AlecsUI v${ALECSUI_VER} — starea serviciilor${C0}"
+}
+
+
+
+install_lock(){
+  mkdir -p "$(dirname "$LOCKF")"
+  exec 9>"$LOCKF"
+  if ! flock -n 9; then
+    echo -e "\033[1;31mERROR: another AlecsUI install/update is already running (lock $LOCKF).\033[0m"
+    exit 1
+  fi
+  echo "$$ $(date -Is) AlecsUI $ALECSUI_VER" >&9
+}
+
+manifest_init(){
+  mkdir -p /etc/tunnel "$ORIGD"
+  [ -f "$MANIFEST" ] || echo '{"version":"'"$ALECSUI_VER"'","files":[],"units":[],"dirs":[],"sysctl":[],"cron":[],"ufw":[],"groups":[],"users_sys":[]}' > "$MANIFEST"
+  chmod 600 "$MANIFEST"
+}
+manifest_add(){
+  local kind="$1" path="$2"
+  python3 - "$MANIFEST" "$kind" "$path" <<'PY'
+import json,sys
+p,k,v=sys.argv[1],sys.argv[2],sys.argv[3]
+try: o=json.load(open(p))
+except Exception: o={"files":[],"units":[],"dirs":[],"sysctl":[],"cron":[],"ufw":[],"groups":[],"users_sys":[]}
+o.setdefault(k,[]);
+if v not in o[k]: o[k].append(v)
+o["version"]=o.get("version") or ""
+json.dump(o, open(p,"w"), indent=1)
+PY
+}
+
+pre_upgrade_backup(){
+  [ -d /etc/tunnel ] || return 0
+  local bdir=/root/alecsui-preinstall-$(date +%F-%H%M%S)
+  mkdir -p "$bdir"
+  cp -a /etc/tunnel "$bdir/" 2>/dev/null || true
+  [ -d /etc/alecsui ] && cp -a /etc/alecsui "$bdir/" 2>/dev/null || true
+  [ -f /etc/stunnel/stunnel.conf ] && cp -a /etc/stunnel/stunnel.conf "$bdir/foreign-or-legacy-stunnel.conf" 2>/dev/null || true
+  if [ -x /opt/tunnel-panel/panel.py ]; then
+    python3 /opt/tunnel-panel/panel.py backup "$bdir/users-settings.json" >/dev/null 2>&1 || true
+    chmod 600 "$bdir/users-settings.json" 2>/dev/null || true
+  fi
+  chmod -R go-rwx "$bdir" 2>/dev/null || true
+  echo "Pre-install backup: $bdir"
+}
+
+pid_unit(){
+  local pid="$1" u=""
+  [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null || { echo ""; return; }
+  u=$(systemctl status "$pid" 2>/dev/null | awk -F'[● ]+' '/\.service/{print $2; exit}')
+  [ -n "$u" ] || u=$(tr '\0' ' ' <"/proc/$pid/cgroup" 2>/dev/null | grep -oE '[^/]+\.service' | tail -1 || true)
+  echo "${u:-}"
+}
+
+# AlecsUI stunnel only: dedicated unit OR cmdline with our conf path
+is_alecsui_stunnel_pid(){
+  local pid="$1" unit cmd
+  [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null || return 1
+  unit=$(pid_unit "$pid")
+  [ "$unit" = "${ALECSUI_STUNNEL_UNIT}.service" ] && return 0
+  cmd=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
+  echo "$cmd" | grep -Fq "$ALECSUI_STUNNEL_CONF" && return 0
+  return 1
+}
+
+ours_listener(){
+  local pid="$1" unit bin
+  unit=$(pid_unit "$pid")
+  if [ -n "$unit" ] && echo "$unit" | grep -Eqi "$OUR_UNITS"; then return 0; fi
+  if is_alecsui_stunnel_pid "$pid"; then return 0; fi
+  bin=$(tr '\0' ' ' <"/proc/$pid/comm" 2>/dev/null || true)
+  [ -z "$bin" ] && bin=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+  if echo "$bin" | grep -Eqi 'python'; then
+    tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -Eq 'tunnel-panel|ws-ssh\.py|alecsui-helper' && return 0
+    return 1
+  fi
+  if echo "$bin" | grep -Eqi "^($OUR_BINS)$"; then
+    # Never claim generic stunnel as ours without our conf path
+    if echo "$bin" | grep -Eqi 'stunnel'; then
+      is_alecsui_stunnel_pid "$pid" && return 0
+      return 1
+    fi
+    return 0
+  fi
+  return 1
+}
+
+# busy PORT proto  — checks IPv4 and IPv6; does not steal foreign ports
+busy(){
+  local port="$1" proto="${2:-tcp}" line pid rest foreign=0 fam
+  for fam in -4 -6; do
+    local ss_args=(-ln "$fam")
+    [ "$proto" = udp ] && ss_args+=(-u) || ss_args+=(-t)
+    while IFS= read -r line; do
+      echo "$line" | grep -Eq ":${port}([^0-9]|$)" || continue
+      pid=$(echo "$line" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+      if [ -z "$pid" ]; then
+        echo "Port $port/$proto ($fam) in use (owner unknown):"; echo "  $line"; foreign=1; continue
+      fi
+      if ours_listener "$pid"; then continue; fi
+      rest=$(ps -p "$pid" -o user=,pid=,comm=,args= 2>/dev/null || echo "pid=$pid")
+      echo "Port $port/$proto ($fam) is already in use by another program:"
+      echo "  $rest"; echo "  $line"; foreign=1
+    done < <(ss "${ss_args[@]}" -p 2>/dev/null || true)
+  done
+  if [ "$foreign" = 1 ]; then
+    echo "AlecsUI will not take over foreign ports."
+    return 1
+  fi
+  return 0
+}
+
+# If preferred port is foreign-busy, pick next free from candidates (never steal)
+pick_free_tcp(){
+  local var="$1"; shift
+  local cur="${!var}" c
+  if busy "$cur" tcp; then return 0; fi
+  echo -e "\033[1;33mPort $cur/tcp is taken by a foreign process — selecting an alternate for $var.\033[0m"
+  for c in "$@"; do
+    [ "$c" = "$cur" ] && continue
+    if busy "$c" tcp; then
+      eval "$var=$c"
+      echo "  -> $var=$c"
+      return 0
+    fi
+  done
+  echo -e "\033[1;31mERROR: no free TCP port for $var among candidates.\033[0m"
+  exit 1
+}
+
+stunnel_ours_pids(){
+  local pids=() p line pid
+  p=$(systemctl show -p MainPID --value "${ALECSUI_STUNNEL_UNIT}" 2>/dev/null || true)
+  if [ -n "$p" ] && [ "$p" != 0 ] && is_alecsui_stunnel_pid "$p"; then pids+=("$p"); fi
+  for f in /run/alecsui/stunnel.pid /var/run/alecsui/stunnel.pid; do
+    [ -f "$f" ] || continue
+    p=$(tr -dc '0-9' <"$f" 2>/dev/null || true)
+    [ -n "$p" ] && is_alecsui_stunnel_pid "$p" && pids+=("$p")
+  done
+  while IFS= read -r line; do
+    pid=$(echo "$line" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+    [ -n "$pid" ] || continue
+    is_alecsui_stunnel_pid "$pid" && pids+=("$pid")
+  done < <(ss -lntp 2>/dev/null | grep -E "stunnel" || true)
+  # Legacy v1.8: AlecsUI used system stunnel4 + /etc/stunnel/stunnel.conf (marker required)
+  if [ -f /etc/tunnel/legacy-stunnel4.owned ] && [ -f /etc/stunnel/stunnel.conf ] && grep -q 'AlecsUI' /etc/stunnel/stunnel.conf 2>/dev/null; then
+    p=$(systemctl show -p MainPID --value stunnel4 2>/dev/null || true)
+    if [ -n "$p" ] && [ "$p" != 0 ]; then
+      cmd=$(tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null || true)
+      echo "$cmd" | grep -Eq '/etc/stunnel/stunnel\.conf' && pids+=("$p")
+    fi
+  fi
+  printf '%s\n' "${pids[@]}" | awk 'NF && !seen[$0]++'
+}
+
+# Stop ONLY AlecsUI stunnel unit/PIDs — never stop foreign stunnel4 unless legacy AlecsUI marker
+stunnel_stop_clean(){
+  local pid still i
+  echo "Preparing AlecsUI stunnel ($ALECSUI_STUNNEL_UNIT)..."
+  systemctl stop "$ALECSUI_STUNNEL_UNIT" 2>/dev/null || true
+  if [ -f /etc/tunnel/legacy-stunnel4.owned ]; then
+    echo "  legacy AlecsUI marker: stopping system stunnel4 only for migration to dedicated unit"
+    systemctl stop stunnel4 2>/dev/null || true
+  fi
+  for pid in $(stunnel_ours_pids); do
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "  TERM AlecsUI stunnel pid $pid"
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+  for i in 1 2 3 4 5; do
+    still=0
+    for pid in $(stunnel_ours_pids); do kill -0 "$pid" 2>/dev/null && still=1; done
+    [ "$still" = 0 ] && break
+    sleep 1
+  done
+  for pid in $(stunnel_ours_pids); do
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "  KILL AlecsUI stunnel pid $pid (after TERM timeout)"
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+  mkdir -p /run/alecsui /var/run/alecsui /etc/alecsui
+  chmod 755 /run/alecsui /etc/alecsui
+}
+
+stunnel_write_conf(){
+  mkdir -p /etc/alecsui
+  local accept_ssl
+  if [ -f /etc/tunnel/h443.on ] && [ "$SSL_PORT" = 443 ]; then accept_ssl=127.0.0.1:10443; else accept_ssl=$SSL_PORT; fi
+  cat > "$ALECSUI_STUNNEL_CONF" <<S
+; AlecsUI $ALECSUI_VER dedicated stunnel — foreign stunnel4 untouched
+pid = /run/alecsui/stunnel.pid
+cert = $ALECSUI_STUNNEL_PEM
+sslVersionMin = TLSv1.2
+socket = l:TCP_NODELAY=1
+socket = r:TCP_NODELAY=1
+[ssh-ssl]
+accept = $accept_ssl
+connect = 127.0.0.1:$SSH_PORT
+[ssh-ws-tls]
+accept = $WSTLS_PORT
+connect = 127.0.0.1:$WS_PORT
+S
+  chmod 644 "$ALECSUI_STUNNEL_CONF"
+  manifest_add files "$ALECSUI_STUNNEL_CONF"
+  cat > /etc/systemd/system/${ALECSUI_STUNNEL_UNIT}.service <<S
+[Unit]
+Description=AlecsUI stunnel (SSH SSL / WS-TLS)
+After=network.target
+[Service]
+Type=simple
+ExecStart=/usr/bin/stunnel4 $ALECSUI_STUNNEL_CONF
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target
+S
+  manifest_add units "${ALECSUI_STUNNEL_UNIT}.service"
+}
+
 stunnel_start_ok(){
   stunnel_stop_clean
-  [ -f /etc/default/stunnel4 ] && sed -i 's/^ENABLED=0/ENABLED=1/' /etc/default/stunnel4
-  systemctl enable stunnel4 >/dev/null 2>&1 || true
-  if ! systemctl start stunnel4; then
-    echo -e "\033[1;31mERROR: stunnel4 failed to start\033[0m"
-    journalctl -u stunnel4 -n 20 --no-pager 2>/dev/null || true
-    ss -lntp | grep -E ":($SSL_PORT|$WSTLS_PORT)\b" || true
+  stunnel_write_conf
+  systemctl daemon-reload
+  systemctl enable "$ALECSUI_STUNNEL_UNIT" >/dev/null 2>&1 || true
+  if ! systemctl start "$ALECSUI_STUNNEL_UNIT"; then
+    echo -e "\033[1;31mERROR: $ALECSUI_STUNNEL_UNIT failed to start\033[0m"
+    journalctl -u "$ALECSUI_STUNNEL_UNIT" -n 20 --no-pager 2>/dev/null || true
     return 1
   fi
   sleep 1
-  if systemctl is-active --quiet stunnel4; then
-    echo "stunnel4 is active"
+  if systemctl is-active --quiet "$ALECSUI_STUNNEL_UNIT" && ss -lntp 2>/dev/null | grep -E ":($SSL_PORT|$WSTLS_PORT|10443)\\b" | grep -qi stunnel; then
+    echo "$ALECSUI_STUNNEL_UNIT is active and listening"
     return 0
   fi
-  echo -e "\033[1;31mERROR: stunnel4 is not active after start\033[0m"
-  systemctl status stunnel4 --no-pager -l 2>/dev/null || true
+  echo -e "\033[1;31mERROR: $ALECSUI_STUNNEL_UNIT not listening after start\033[0m"
+  systemctl status "$ALECSUI_STUNNEL_UNIT" --no-pager -l 2>/dev/null || true
   return 1
 }
+
 vps_probe(){
-  echo "VPS capability check..."
-  if uname -r | grep -Eqi 'vz|virtuozzo|openvz|lxc|container'; then
-    echo -e "\033[1;33mNOTE: container/OpenVZ-like kernel detected ($(uname -r)).\033[0m"
-    echo "  WireGuard / BBR / OpenVPN(TUN) may be limited. SSH, WS, V2Ray, Hysteria2 usually work."
+  local virt=unknown kern arch
+  kern=$(uname -r); arch=$(uname -m)
+  echo "VPS capability check (AlecsUI $ALECSUI_VER)..."
+  echo "  Kernel: $kern  Arch: $arch"
+  if [ -f /proc/vz/version ] || uname -r | grep -Eqi 'vz|virtuozzo|openvz'; then virt=openvz
+  elif grep -qiE 'container|lxc' /proc/1/environ 2>/dev/null || [ -f /.dockerenv ] || uname -r | grep -Eqi 'lxc|container'; then virt=lxc
+  elif systemd-detect-virt >/dev/null 2>&1; then virt=$(systemd-detect-virt 2>/dev/null || echo kvm)
+  elif [ -d /proc/xen ]; then virt=xen
+  else virt=kvm; fi
+  echo "  Virt: $virt"
+  CAP_TUN=0; CAP_WG=0; CAP_BBR=0; CAP_SYSTEMD=0; CAP_OVPN=0
+  command -v systemctl >/dev/null && systemctl list-units >/dev/null 2>&1 && CAP_SYSTEMD=1
+  [ "$CAP_SYSTEMD" = 1 ] || { echo -e "\033[1;31mERROR: systemd is required.\033[0m"; exit 1; }
+  if [ -c /dev/net/tun ]; then CAP_TUN=1; CAP_OVPN=1; echo "  TUN: OK"; else
+    echo -e "\033[1;33m  TUN: MISSING — OpenVPN NOT SUPPORTED.\033[0m"
   fi
-  if [ ! -c /dev/net/tun ]; then
-    echo -e "\033[1;33mWARNING: /dev/net/tun missing — OpenVPN will not work.\033[0m"
-  else
-    echo "TUN: OK"
-  fi
-  if modprobe tcp_bbr 2>/dev/null; then echo "BBR module: OK"; else echo -e "\033[1;33mWARNING: BBR module missing — using default congestion control.\033[0m"; fi
+  if modprobe tcp_bbr 2>/dev/null || grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+    CAP_BBR=1; echo "  BBR: OK"
+  else echo -e "\033[1;33m  BBR: NOT SUPPORTED.\033[0m"; fi
   if modprobe wireguard 2>/dev/null && ip link add rxwg-probe type wireguard 2>/dev/null; then
-    ip link del rxwg-probe 2>/dev/null || true
-    echo "WireGuard kernel: OK"
+    ip link del rxwg-probe 2>/dev/null || true; CAP_WG=1; echo "  WireGuard: OK"
   else
     ip link del rxwg-probe 2>/dev/null || true
-    echo -e "\033[1;33mWARNING: WireGuard kernel support missing — WG users will not work.\033[0m"
+    echo -e "\033[1;33m  WireGuard: NOT SUPPORTED.\033[0m"
   fi
+  case "$virt" in openvz|lxc) echo -e "\033[1;33mNOTE: $virt detected. Prefer KVM for OpenVPN/WireGuard/BBR.\033[0m";; esac
+  mkdir -p /etc/tunnel
+  cat > "$CAPF" <<C
+ALECSUI_VER=$ALECSUI_VER
+VIRT=$virt
+ARCH=$arch
+KERNEL=$kern
+CAP_TUN=$CAP_TUN
+CAP_OVPN=$CAP_OVPN
+CAP_WG=$CAP_WG
+CAP_BBR=$CAP_BBR
+CAP_SYSTEMD=$CAP_SYSTEMD
+C
+  chmod 644 "$CAPF"
+  WG_KERNEL_OK=$CAP_WG
+  export WG_KERNEL_OK CAP_TUN CAP_OVPN CAP_WG CAP_BBR
 }
-# Robust download for VPS with slow/blocked GitHub (timeouts + mirrors + wget fallback)
+
+# Official digest ONLY from github.com (never from mirror). Binary may use mirror but must match official digest.
+dl_official_digest(){
+  local out="$1" url="$2"
+  [[ "$url" == https://github.com/* ]] || { echo "ERROR: digest URL must be github.com"; return 1; }
+  rm -f "$out"
+  curl -fL --connect-timeout 10 --max-time 60 -o "$out" "$url" || return 1
+  [ -s "$out" ] || return 1
+}
+
 dl(){
-  local out="$1" url="$2" min="${3:-0}" u ok=0
-  local mirrors=(
-    ""
-    "https://ghfast.top/"
-    "https://ghproxy.net/"
-    "https://mirror.ghproxy.com/"
-    "https://github.moeyy.xyz/"
-  )
+  local out="$1" url="$2" min="${3:-0}" expect="${4:-}" u ok=0 got
+  local mirrors=("" "https://ghfast.top/" "https://ghproxy.net/" "https://mirror.ghproxy.com/" "https://github.moeyy.xyz/")
   for m in "${mirrors[@]}"; do
     if [[ "$url" == https://github.com/* ]]; then u="${m}${url}"; else u="$url"; [ -n "$m" ] && continue; fi
     echo "  -> $u"
@@ -90,55 +492,115 @@ dl(){
       curl -fL --connect-timeout 8 --max-time 90 --retry 1 --retry-delay 1 -o "$out" "$u" && ok=1 || ok=0
     elif command -v wget >/dev/null 2>&1; then
       wget -q --timeout=8 --tries=2 -O "$out" "$u" && ok=1 || ok=0
-    else
-      echo "ERROR: curl/wget missing"; return 1
-    fi
+    else echo "ERROR: curl/wget missing"; return 1; fi
     if [ "$ok" = 1 ] && [ -f "$out" ] && [ "$(stat -c%s "$out" 2>/dev/null || echo 0)" -ge "$min" ]; then
-      echo "  OK ($(du -h "$out" | awk '{print $1}'))"
+      if [ -n "$expect" ]; then
+        got=$(sha256sum "$out" | awk '{print $1}')
+        if [ "$got" != "$expect" ]; then echo "  SHA256 mismatch — rejecting"; rm -f "$out"; continue; fi
+        echo "  OK + SHA256 verified"
+      else echo "  OK ($(du -h "$out" | awk '{print $1}'))"; fi
       return 0
     fi
-    echo "  failed, next mirror..."
     rm -f "$out"
   done
   return 1
 }
+
+ui_pick_lang
+ui_banner
+os_check
+install_lock
+manifest_init
+say "${CC}Preparing install…${C0}" "${CC}Pregătim instalarea…${C0}"
 [ -f /etc/tunnel/config ] && . /etc/tunnel/config
-if [ -z "$PANEL_PORT" ]; then
+[ -f "$CAPF" ] && . "$CAPF" 2>/dev/null || true
+if [ -z "${PANEL_PORT:-}" ]; then
   PANEL_PORT=$(shuf -i 20000-59999 -n1)
-  while ss -tln | grep -q ":$PANEL_PORT "; do PANEL_PORT=$(shuf -i 20000-59999 -n1); done
+  while ! busy "$PANEL_PORT" tcp; do PANEL_PORT=$(shuf -i 20000-59999 -n1); done
 fi
-[ -n "$WEB_PATH" ] || WEB_PATH=$(tr -dc a-z0-9 </dev/urandom | head -c 10)
-# Free our stunnel ports before busy-check / reinstall
-stunnel_stop_clean
-for p in $SSL_PORT $WS_PORT $WSTLS_PORT $PANEL_PORT $OVPN1_PORT $OVPN2_PORT $SQUID_PORT; do busy $p; done
-export DEBIAN_FRONTEND=noninteractive
-mkdir -p /etc/tunnel/cert $LIB
+[ -n "${WEB_PATH:-}" ] || WEB_PATH=$(tr -dc a-z0-9 </dev/urandom | head -c 10)
+pre_upgrade_backup
 vps_probe
 
-step 1 "Packages"
-echo "Updating apt package lists..."
-apt-get update -qq
-echo "Installing packages (this can take several minutes)..."
-apt-get install -y -qq openssh-server stunnel4 fail2ban cmake build-essential git openssl curl cron python3 socat unzip iptables openvpn squid >/dev/null
-apt-get install -y -qq haproxy >/dev/null 2>&1 || echo -e "\033[1;33mHAProxy could not be installed, 443 mode stays off (everything else works).\033[0m"
-echo "Packages OK"
-[ -c /dev/net/tun ] || echo -e "\033[1;33mWARNING: /dev/net/tun is missing. OpenVPN needs TUN: enable it in your VPS control panel (OpenVZ / LXC) or ask your provider.\033[0m"
+# Port plan: never steal; reassign SSL if foreign stunnel holds 443
+stunnel_stop_clean
+pick_free_tcp SSL_PORT 443 444 10443 8443 9443
+pick_free_tcp WS_PORT 8880 8881 8081 9080
+pick_free_tcp WSTLS_PORT 2083 2084 2087 2096
+busy "$PANEL_PORT" tcp || { echo "PANEL_PORT busy"; exit 1; }
+if [ -c /dev/net/tun ]; then
+  pick_free_tcp OVPN1_PORT 1194 1195 1196
+  pick_free_tcp OVPN2_PORT 110 111 112
+  pick_free_tcp SQUID_PORT 3128 3129 8080
+fi
+busy "$HY_PORT" udp || { echo -e "\033[1;33mUDP $HY_PORT busy — set HY_PORT in /etc/tunnel/config after install if needed.\033[0m"; }
+if [ "${CAP_WG:-0}" = 1 ]; then
+  busy "$WG_PORT" udp || echo -e "\033[1;33mUDP $WG_PORT (WireGuard) busy — WG may fail until free.\033[0m"
+fi
 
-step 2 "SSH tuning"
+export DEBIAN_FRONTEND=noninteractive
+mkdir -p /etc/tunnel/cert $LIB /etc/alecsui "$ORIGD"
+
+step 1 "Packages" "Pachete"
+say "${CD}Updating apt package lists…${C0}" "${CD}Actualizăm listele apt…${C0}"
+spin_start "$( [ "$UI_LANG" = ro ] && echo "Descărcăm pachetele…" || echo "Downloading packages…" )"
+apt-get update -qq
+PKGS="openssh-server stunnel4 fail2ban cmake build-essential git openssl curl cron python3 socat unzip iptables squid"
+[ "${CAP_OVPN:-0}" = 1 ] && PKGS="$PKGS openvpn"
+# shellcheck disable=SC2086
+apt-get install -y -qq $PKGS >/dev/null
+apt-get install -y -qq haproxy >/dev/null 2>&1 || warn "HAProxy missing — 443 mode stays off." "HAProxy lipsește — modul 443 rămâne oprit."
+spin_stop 1 "Packages ready" "Pachete gata"
+[ "${CAP_OVPN:-0}" = 1 ] || warn "OpenVPN skipped (no TUN)." "OpenVPN omis (fără TUN)."
+
+step 2 "SSH tuning (Match Group $SSH_GROUP)" "Configurare SSH (Match Group $SSH_GROUP)"
 mkdir -p /etc/ssh/sshd_config.d
 grep -q '^Include' /etc/ssh/sshd_config || sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
-cat > /etc/ssh/sshd_config.d/00-tunnel.conf <<S
-PasswordAuthentication yes
+# Backup existing drop-in / effective snippets we replace
+if [ -f /etc/ssh/sshd_config.d/00-tunnel.conf ]; then
+  cp -a /etc/ssh/sshd_config.d/00-tunnel.conf "$ORIGD/00-tunnel.conf.bak.$(date +%s)"
+fi
+getent group "$SSH_GROUP" >/dev/null || groupadd --system "$SSH_GROUP"
+manifest_add groups "$SSH_GROUP"
+ROOT_LOGIN=$(sshd -T 2>/dev/null | awk '/^permitrootlogin /{print $2; exit}')
+# Global: do NOT enable PasswordAuthentication for everyone. Only Match Group.
+cat > /etc/ssh/sshd_config.d/00-alecsui.conf <<S
+# Managed by AlecsUI $ALECSUI_VER
+# PasswordAuthentication is NOT enabled globally.
+# Tunnel VPN/SSH clients are in group $SSH_GROUP and matched below.
 UseDNS no
 TCPKeepAlive yes
 ClientAliveInterval 15
 ClientAliveCountMax 2
 AllowTcpForwarding yes
 Compression no
+Match Group $SSH_GROUP
+    PasswordAuthentication yes
+    AllowTcpForwarding yes
 S
-sshd -t
+manifest_add files /etc/ssh/sshd_config.d/00-alecsui.conf
+rm -f /etc/ssh/sshd_config.d/00-tunnel.conf
+if ! sshd -t; then
+  echo -e "\033[1;31mERROR: sshd -t failed — rolling back AlecsUI SSH drop-in.\033[0m"
+  rm -f /etc/ssh/sshd_config.d/00-alecsui.conf
+  exit 1
+fi
 systemctl restart ssh 2>/dev/null || systemctl restart sshd
-sshd -T | grep -qi '^passwordauthentication yes' || echo "WARNING: PasswordAuthentication could not be enabled, check /etc/ssh/sshd_config"
+# Verify: root must not gain password auth from our drop-in; group match must allow passwords
+echo "SSH effective checks:"
+echo "  PermitRootLogin: $(sshd -T | awk '/^permitrootlogin /{print $2; exit}')"
+echo "  PasswordAuthentication (global default): $(sshd -T | awk '/^passwordauthentication /{print $2; exit}')"
+if command -v sshd >/dev/null; then
+  # Match user simulation if supported
+  if sshd -T -C user=root,host=localhost,addr=127.0.0.1 2>/dev/null | awk '/^passwordauthentication /{print $2; exit}' | grep -qi yes; then
+    case "${ROOT_LOGIN:-}" in
+      yes) echo -e "\033[1;33mNOTE: root password auth is enabled by existing server policy (not introduced as global yes by AlecsUI Match).\033[0m";;
+    esac
+  fi
+fi
+case "${ROOT_LOGIN:-}" in
+  yes|Yes) echo -e "\033[1;33mSECURITY: PermitRootLogin is 'yes'. Prefer prohibit-password + SSH keys for root.\033[0m";;
+esac
 SSH_PORT=$(sshd -T | awk '/^port /{print $2; exit}'); SSH_PORT=${SSH_PORT:-$SSH_PORT_DEF}
 cat > /etc/tunnel/config <<S
 SSH_PORT=$SSH_PORT
@@ -160,51 +622,71 @@ HY_PORT=$HY_PORT
 HY_HOP=$HY_HOP
 WG_PORT=$WG_PORT
 S
+chmod 600 /etc/tunnel/config
+manifest_add files /etc/tunnel/config
 
-step 3 "SSL + WS TLS (stunnel4, 10-year certificate)"
+step 3 "SSL + WS TLS ($ALECSUI_STUNNEL_UNIT)" "SSL + WS TLS ($ALECSUI_STUNNEL_UNIT)"
 stunnel_stop_clean
-[ -f /etc/stunnel/stunnel.pem ] || {
-  openssl req -new -x509 -days 3650 -nodes -subj "/CN=www.google.com" -out /etc/stunnel/stunnel.pem -keyout /etc/stunnel/stunnel.pem 2>/dev/null
-  chmod 600 /etc/stunnel/stunnel.pem; }
-cat > /etc/stunnel/stunnel.conf <<S
-pid = /var/run/stunnel4/stunnel4.pid
-cert = /etc/stunnel/stunnel.pem
-sslVersionMin = TLSv1.2
-socket = l:TCP_NODELAY=1
-socket = r:TCP_NODELAY=1
-[ssh-ssl]
-accept = $( [ -f /etc/tunnel/h443.on ] && [ "$SSL_PORT" = 443 ] && echo 127.0.0.1:10443 || echo $SSL_PORT )
-connect = 127.0.0.1:$SSH_PORT
-[ssh-ws-tls]
-accept = $WSTLS_PORT
-connect = 127.0.0.1:$WS_PORT
-S
-[ -f /etc/default/stunnel4 ] && sed -i 's/^ENABLED=0/ENABLED=1/' /etc/default/stunnel4
-# Start early so we fail fast with a clear message if SSL ports conflict
-stunnel_start_ok || echo -e "\033[1;33mWARNING: stunnel4 not running yet; will retry at the end.\033[0m"
+# Migrate legacy AlecsUI pem out of /etc/stunnel without destroying foreign certs
+if [ ! -f "$ALECSUI_STUNNEL_PEM" ]; then
+  if [ -f /etc/stunnel/stunnel.pem ] && [ -f /etc/tunnel/legacy-stunnel4.owned ]; then
+    cp -a /etc/stunnel/stunnel.pem "$ALECSUI_STUNNEL_PEM"
+  elif [ -f /etc/stunnel/stunnel.pem ] && grep -q 'AlecsUI\|ssh-ws-tls' /etc/stunnel/stunnel.conf 2>/dev/null; then
+    cp -a /etc/stunnel/stunnel.pem "$ALECSUI_STUNNEL_PEM"
+    # Restore foreign stunnel.conf if we have original; else leave a note
+    if [ -f "$ORIGD/stunnel.conf.pre-alecsui" ]; then
+      cp -a "$ORIGD/stunnel.conf.pre-alecsui" /etc/stunnel/stunnel.conf
+    fi
+    touch /etc/tunnel/legacy-stunnel4.owned
+  else
+    # First install: if /etc/stunnel/stunnel.conf exists and is NOT ours, back it up and do not overwrite
+    if [ -f /etc/stunnel/stunnel.conf ] && ! grep -q 'AlecsUI' /etc/stunnel/stunnel.conf 2>/dev/null; then
+      cp -a /etc/stunnel/stunnel.conf "$ORIGD/stunnel.conf.pre-alecsui"
+      echo "Preserved foreign /etc/stunnel/stunnel.conf -> $ORIGD/stunnel.conf.pre-alecsui"
+    fi
+    openssl req -new -x509 -days 3650 -nodes -subj "/CN=AlecsUI-selfsigned" -out "$ALECSUI_STUNNEL_PEM" -keyout "$ALECSUI_STUNNEL_PEM" 2>/dev/null
+  fi
+fi
+if openssl x509 -in "$ALECSUI_STUNNEL_PEM" -noout -subject 2>/dev/null | grep -qi 'www\.google\.com'; then
+  echo -e "\033[1;33mReplacing misleading stunnel CN www.google.com with AlecsUI-selfsigned.\033[0m"
+  cp -a "$ALECSUI_STUNNEL_PEM" "$ALECSUI_STUNNEL_PEM.bak.$(date +%s)"
+  openssl req -new -x509 -days 3650 -nodes -subj "/CN=AlecsUI-selfsigned" -out "$ALECSUI_STUNNEL_PEM" -keyout "$ALECSUI_STUNNEL_PEM" 2>/dev/null
+fi
+chmod 600 "$ALECSUI_STUNNEL_PEM"
+manifest_add files "$ALECSUI_STUNNEL_PEM"
+# Do NOT enable/modify generic stunnel4 for AlecsUI
+stunnel_start_ok || echo -e "\033[1;33mWARNING: $ALECSUI_STUNNEL_UNIT not running yet; will retry at the end.\033[0m"
 
-step 4 "BadVPN UDPGW"
+step 4 "BadVPN UDPGW" "BadVPN UDPGW"
+say "${CD}Pinned commit $BADVPN_COMMIT${C0}" "${CD}Commit fixat $BADVPN_COMMIT${C0}"
 if [ ! -x /usr/local/bin/badvpn-udpgw ]; then
   cd /tmp && rm -rf badvpn
-  git -c advice.detachedHead=false clone -q --depth 1 --branch 1.999.130 https://github.com/ambrop72/badvpn.git
-  mkdir badvpn/build && cd badvpn/build
+  git -c advice.detachedHead=false clone -q https://github.com/ambrop72/badvpn.git
+  cd badvpn
+  git checkout -q "$BADVPN_COMMIT"
+  GOT=$(git rev-parse HEAD)
+  [ "$GOT" = "$BADVPN_COMMIT" ] || { echo "ERROR: BadVPN commit mismatch ($GOT != $BADVPN_COMMIT)"; exit 1; }
+  mkdir build && cd build
   cmake .. -Wno-dev -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 >/tmp/badvpn-build.log 2>&1 || { echo "BadVPN cmake failed, see /tmp/badvpn-build.log"; exit 1; }
   { make -j$(nproc) && make install; } >>/tmp/badvpn-build.log 2>&1 || { echo "BadVPN build failed, see /tmp/badvpn-build.log"; exit 1; }
   cd /
+  manifest_add files /usr/local/bin/badvpn-udpgw
 fi
 cat > /etc/systemd/system/badudp.service <<S
 [Unit]
-Description=BadVPN UDPGW
+Description=AlecsUI BadVPN UDPGW
 After=network.target
 [Service]
 ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:$UDPGW_PORT --max-clients 1000 --max-connections-for-client 100
 Restart=always
 LimitNOFILE=1048576
+PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 S
+manifest_add units badudp.service
 
-step 5 "SSH WS (plain) proxy"
+step 5 "SSH WebSocket proxy" "Proxy SSH WebSocket"
 cat > /usr/local/bin/ws-ssh.py <<'PYW'
 #!/usr/bin/env python3
 import asyncio,sys,socket,re,base64,hashlib,os
@@ -312,7 +794,7 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 S
 
-step 6 "BBR + FQ"
+step 6 "BBR + FQ network tuning" "Reglare rețea BBR + FQ"
 BBR_OK=0
 if modprobe tcp_bbr 2>/dev/null; then
   BBR_OK=1
@@ -356,7 +838,7 @@ printf '[Journal]\nSystemMaxUse=200M\nRuntimeMaxUse=100M\n' > /etc/systemd/journ
 systemctl restart systemd-journald 2>/dev/null || true
 sysctl --system >/dev/null 2>&1 || echo "WARNING: some sysctl settings were not applied"
 
-step 7 "Fail2ban"
+step 7 "Fail2ban" "Fail2ban"
 cat > /etc/fail2ban/jail.local <<S
 [sshd]
 enabled = true
@@ -369,36 +851,36 @@ S
 systemctl enable fail2ban >/dev/null 2>&1
 systemctl restart fail2ban
 
-step 8 "Xray core"
+step 8 "Xray core $XRAY_VER (SHA256 required)" "Xray core $XRAY_VER (SHA256 obligatoriu)"
+spin_start "$( [ "$UI_LANG" = ro ] && echo "Descărcăm Xray…" || echo "Downloading Xray…" )"
 if [ ! -x /usr/local/bin/xray ] || [ ! -f /usr/local/bin/geosite.dat ]; then
   case $(uname -m) in x86_64|amd64) XA=64;; aarch64|arm64) XA=arm64-v8a;; *) echo "This CPU ($(uname -m)) is not supported"; exit 1;; esac
   rm -rf /tmp/xr && mkdir /tmp/xr
-  echo "Downloading Xray (timeouts + mirrors; may take 1-3 minutes)..."
-  XR_OK=0
-  for XR_REL in "latest" "$XRAY_VER"; do
-    if [ "$XR_REL" = "latest" ]; then
-      XR_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip"
-      XR_DGST="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-$XA.zip.dgst"
-    else
-      XR_URL="https://github.com/XTLS/Xray-core/releases/download/${XR_REL}/Xray-linux-$XA.zip"
-      XR_DGST="https://github.com/XTLS/Xray-core/releases/download/${XR_REL}/Xray-linux-$XA.zip.dgst"
-    fi
-    echo "Trying release: $XR_REL"
-    if dl /tmp/xr/x.zip "$XR_URL" 1000000; then XR_OK=1; break; fi
-  done
-  [ "$XR_OK" = 1 ] || { echo -e "\033[1;31mERROR: could not download Xray.\033[0m GitHub is blocked/slow on this VPS. Install manually then re-run:"; echo "  mkdir -p /tmp/xr && cd /tmp/xr"; echo "  # upload Xray-linux-$XA.zip here, then:"; echo "  unzip -qo Xray-linux-$XA.zip xray geoip.dat geosite.dat && install -m 755 xray /usr/local/bin/xray && install -m 644 geoip.dat geosite.dat /usr/local/bin/"; exit 1; }
-  dl /tmp/xr/x.dgst "$XR_DGST" 20 || true
+  echo "Downloading Xray $XRAY_VER (checksum mandatory; mirrors only after digest match)..."
+  XR_URL="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VER}/Xray-linux-$XA.zip"
+  XR_DGST="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VER}/Xray-linux-$XA.zip.dgst"
+  if ! dl /tmp/xr/x.zip "$XR_URL" 1000000; then
+    echo -e "\033[1;31mERROR: could not download Xray $XRAY_VER.\033[0m GitHub may be blocked. Manual install then re-run:"
+    echo "  mkdir -p /tmp/xr && cd /tmp/xr"
+    echo "  # upload verified Xray-linux-$XA.zip + .dgst for $XRAY_VER, then:"
+    echo "  unzip -qo Xray-linux-$XA.zip xray geoip.dat geosite.dat && install -m 755 xray /usr/local/bin/xray && install -m 644 geoip.dat geosite.dat /usr/local/bin/"
+    exit 1
+  fi
+  if ! dl_official_digest /tmp/xr/x.dgst "$XR_DGST"; then
+    echo -e "\033[1;31mERROR: Xray digest missing from github.com — refusing unverified binary.\033[0m"
+    rm -rf /tmp/xr; exit 1
+  fi
   XS=$(grep -ioE '^SHA(2-)?256[^=]*= *[0-9a-f]{64}' /tmp/xr/x.dgst 2>/dev/null | grep -ioE '[0-9a-f]{64}$' | head -1 | tr 'A-F' 'a-f')
   if [ -z "$XS" ] || [ "$(sha256sum /tmp/xr/x.zip | awk '{print $1}')" != "$XS" ]; then
-    echo "WARNING: Xray checksum missing/mismatched; installing zip anyway (size OK)."
-  else
-    echo "Xray checksum OK"
+    echo -e "\033[1;31mERROR: Xray SHA256 missing or mismatched — install aborted (no unverified binaries).\033[0m"
+    rm -rf /tmp/xr; exit 1
   fi
+  echo "Xray checksum OK ($XS)"
   unzip -qo /tmp/xr/x.zip xray geoip.dat geosite.dat -d /tmp/xr && install -m 755 /tmp/xr/xray /usr/local/bin/xray
   install -m 644 /tmp/xr/geoip.dat /tmp/xr/geosite.dat /usr/local/bin/ && rm -rf /tmp/xr
-  echo "Xray installed"
+  spin_stop 1 "Xray $XRAY_VER installed" "Xray $XRAY_VER instalat"
 else
-  echo "Xray already present, skipping download"
+  spin_stop 1 "Xray already present" "Xray deja instalat"
 fi
 /usr/local/bin/xray version | head -1
 mkdir -p /usr/local/etc/xray /var/log/xray
@@ -435,11 +917,16 @@ elif /usr/local/bin/hysteria version 2>/dev/null | grep -q "v$HYV"; then echo "H
 else
   HT=$(mktemp -d); HU="https://github.com/apernet/hysteria/releases/download/app/v$HYV"
   echo "Downloading Hysteria2..."
-  if dl $HT/hy "$HU/hysteria-linux-$HA" 1000000 && dl $HT/hashes.txt "$HU/hashes.txt" 20; then
-    HW=$(grep -E "[ /*]hysteria-linux-$HA\$" $HT/hashes.txt | awk '{print $1}' | head -1); HG=$(sha256sum $HT/hy | awk '{print $1}')
-    if [ -n "$HW" ] && [ "$HW" = "$HG" ]; then install -m 755 $HT/hy /usr/local/bin/hysteria; echo "Hysteria2 installed (checksum OK)"
-    else echo "WARNING: Hysteria2 checksum did not match, it was NOT installed"; fi
-  else echo "WARNING: Hysteria2 download failed, UDP users will not work until you run the installer again"; fi
+  if ! dl_official_digest $HT/hashes.txt "$HU/hashes.txt"; then
+    echo "WARNING: Hysteria2 official hashes.txt from github.com unavailable — NOT installed"
+  else
+    HW=$(grep -E "[ /*]hysteria-linux-$HA\$" $HT/hashes.txt | awk '{print $1}' | head -1)
+    if [ -z "$HW" ]; then echo "WARNING: hash for hysteria-linux-$HA missing — NOT installed"
+    elif dl $HT/hy "$HU/hysteria-linux-$HA" 1000000 "$HW"; then
+      install -m 755 $HT/hy /usr/local/bin/hysteria; echo "Hysteria2 installed (official SHA256 OK)"
+      # manifest added later if present
+    else echo "WARNING: Hysteria2 binary failed SHA256 — NOT installed"; fi
+  fi
   rm -rf $HT
 fi
 
@@ -483,7 +970,8 @@ for r in json.load(sys.stdin):
   rm -rf $GT
 fi
 
-step 9 "Web panel"
+step 9 "Web panel" "Panou web"
+say "${CD}Writing panel files…${C0}" "${CD}Scriem fișierele panoului…${C0}"
 mkdir -p /opt/tunnel-panel
 cat > /opt/tunnel-panel/panel.py <<'PANELPY'
 #!/usr/bin/env python3
@@ -511,8 +999,34 @@ E=env()
 def P(k,d):
     try: return int(E.get(k,d))
     except ValueError: return d
+HELPER_SOCK='/run/alecsui/helper.sock'
+def helper_call(op,args=None,inp=None,t=40):
+    """Prefer allowlisted helper when available; never send arbitrary shell."""
+    try:
+        import socket as _s
+        if not os.path.exists(HELPER_SOCK): raise FileNotFoundError
+        req={'op':op,'args':list(args or [])}
+        if inp is not None: req['input']=inp
+        c=_s.socket(_s.AF_UNIX,_s.SOCK_STREAM); c.settimeout(t); c.connect(HELPER_SOCK)
+        c.sendall((json.dumps(req)+'\n').encode()); data=b''
+        while not data.endswith(b'\n') and len(data)<1<<20:
+            chunk=c.recv(4096)
+            if not chunk: break
+            data+=chunk
+        c.close(); j=json.loads(data.decode() or '{}')
+        return sp.CompletedProcess(args or [op], int(j.get('code',0 if j.get('ok') else 1)), j.get('stdout',''), j.get('stderr') or j.get('e',''))
+    except Exception as x:
+        return None
 def run(*a,inp=None,t=40):
-    try: return sp.run(list(a),input=inp,capture_output=True,text=True,timeout=t)
+    a=list(a)
+    # Route known privileged ops through helper when socket is up
+    if a and a[0]=='systemctl' and os.path.exists(HELPER_SOCK):
+        h=helper_call('systemctl',a[1:],t=t)
+        if h is not None: return h
+    if a and a[0] in ('useradd','userdel','usermod','chpasswd','ufw','iptables','ip6tables') and os.path.exists(HELPER_SOCK):
+        h=helper_call('run',a,inp=inp,t=t)
+        if h is not None: return h
+    try: return sp.run(a,input=inp,capture_output=True,text=True,timeout=t)
     except Exception as x: return sp.CompletedProcess(a,1,'',str(x))
 def log(*a): print(*a,flush=True)
 class Err(Exception): pass
@@ -941,6 +1455,7 @@ def mkuser(us,n,p,e,lim=0.0,sni='',host='',dev=2,rday=0,note='',**kw):
     for flag in ('--badname','--badnames'):
         if r.returncode and 'name' in r.stderr: r=run('useradd',flag,'-m','-s','/bin/false',n)
     if r.returncode: raise Err('Could not create user: '+r.stderr.strip()[-120:])
+    run('usermod','-aG','alecsui-ssh',n)
     if run('chpasswd',inp='%s:%s\n'%(n,p)).returncode:
         run('userdel','-r',n); raise Err('Could not set the password for this user, it was not created')
     b=newu(n,p,e,lim,sni,host,dev,rday); b['note']=note; b.update(kw); us.append(b); setexp(n,e)
@@ -2541,7 +3056,7 @@ def ports_view():
         res.append({'name':n,'port':p,'proto':pr,'listen':bool(prog),'prog':prog,'fw':f})
     hop=hyhop() if hy_on() else None
     if hop: res.append({'name':'Hysteria2 port hopping','port':'%d-%d'%hop,'proto':'udp','listen':True,'prog':'redirect','fw':'off' if fw is None else ('open' if any(x[0]=='udp' and x[1]<=hop[0] and x[2]>=hop[1] for x in fw) else 'closed')})
-    known={'haproxy','sshd','xray','stunnel4','stunnel','python3','openvpn','squid','hysteria','dnstt-server','badvpn-udpgw','systemd-resolve','chronyd','dhclient','systemd-network'}
+    known={'haproxy','sshd','xray','alecsui-stunnel','stunnel','python3','openvpn','squid','hysteria','dnstt-server','badvpn-udpgw','systemd-resolve','chronyd','dhclient','systemd-network'}
     other=[{'port':p,'proto':pr,'prog':g} for (pr,p),g in sorted(ls.items(),key=lambda x:(x[0][0],x[0][1])) if (pr,p) not in seen and g not in known]
     dup={}
     for n,p,pr in mine: dup.setdefault((pr,p),[]).append(n)
@@ -2647,7 +3162,7 @@ def server_check():
     ls=ss_listeners(); bad=[]
     for n,p,pr in port_list():
         g=ls.get((pr,p))
-        if g and g!='?' and g not in ('haproxy','sshd','xray','stunnel4','stunnel','python3','openvpn','squid','hysteria','dnstt-server'): bad.append('%s %d/%s used by %s'%(n,p,pr,g))
+        if g and g!='?' and g not in ('haproxy','sshd','xray','alecsui-stunnel','stunnel','python3','openvpn','squid','hysteria','dnstt-server'): bad.append('%s %d/%s used by %s'%(n,p,pr,g))
     if bad: add('clash','Port conflicts','fail','; '.join(bad))
     sync=run('timedatectl','show','-p','NTPSynchronized','--value').stdout.strip()
     if sync: add('time','Clock','ok' if sync=='yes' else 'warn','In sync.' if sync=='yes' else 'The clock is not synced. Reality and TLS can fail with a wrong clock.',None if sync=='yes' else 'ntp')
@@ -2659,6 +3174,27 @@ def server_check():
     av,mt,sw=mi.get('MemAvailable',0),mi.get('MemTotal',1),mi.get('SwapTotal',0)
     add('ram','Memory','ok' if av>mt*0.1 else 'warn','%s free of %s%s.'%(fmt_b(av),fmt_b(mt),'' if sw else ', no swap'))
     if not s.get('tgtoken'): add('tg','Telegram alerts','warn','Off. Add a bot in Settings → Telegram to get alerts when something breaks.')
+    # Kernel / virt capabilities (written by installer)
+    cap={}
+    try:
+        for ln in rd(T+'/capabilities').splitlines():
+            if '=' in ln and not ln.startswith('#'):
+                k,v=ln.split('=',1); cap[k]=v
+    except Exception: pass
+    if cap:
+        virt=cap.get('VIRT','?'); add('virt','Virtualization','ok' if virt in ('kvm','qemu','microsoft','vmware','xen','none') else 'warn',
+            'Detected: %s (kernel %s).'%(virt,cap.get('KERNEL','?')))
+        if cap.get('CAP_TUN')=='0': add('cap_tun','TUN / OpenVPN','warn','NOT SUPPORTED: /dev/net/tun missing. OpenVPN skipped.')
+        else: add('cap_tun','TUN / OpenVPN','ok','TUN available.')
+        if cap.get('CAP_WG')=='0': add('cap_wg','WireGuard kernel','warn','NOT SUPPORTED on this kernel. WG users will not work.')
+        else: add('cap_wg','WireGuard kernel','ok','Kernel WireGuard available.')
+        if cap.get('CAP_BBR')=='0': add('cap_bbr','BBR','warn','NOT SUPPORTED — default congestion control.')
+    # Self-signed stunnel must not look like a public CA / foreign CN
+    try:
+        sub=run('openssl','x509','-in','/etc/stunnel/stunnel.pem','-noout','-subject',t=5).stdout
+        if 'www.google.com' in sub.lower(): add('stunnel_cn','Stunnel certificate','fail','Misleading CN www.google.com. Re-run installer (v1.9+) to replace with AlecsUI-selfsigned.')
+        elif 'alecsui' in sub.lower() or 'selfsigned' in sub.lower(): add('stunnel_cn','Stunnel certificate','ok','Self-signed AlecsUI cert (not a public CA). Use menu → SSL for Let\'s Encrypt.')
+    except Exception: pass
     order={'fail':0,'warn':1,'ok':2}; R.sort(key=lambda x:order[x['st']])
     return {'t':int(time.time()),'items':R,'fail':sum(1 for x in R if x['st']=='fail'),'warn':sum(1 for x in R if x['st']=='warn')}
 def fmt_b(n):
@@ -2783,18 +3319,18 @@ def h_cfg():
     return '\n'.join(L)
 def h_ssl_move(on):
     """While 443 mode is on, stunnel's SSH SSL service moves to 127.0.0.1:10443 so HAProxy can use port 443."""
-    f='/etc/stunnel/stunnel.conf'; t=rd(f)
+    f='/etc/alecsui/stunnel.conf'; t=rd(f)
     if not t: return False
     want='127.0.0.1:10443' if on and P('SSL_PORT',443)==443 else str(P('SSL_PORT',443))
     n=re.sub(r'(\[ssh-ssl\][^\[]*?accept\s*=\s*)\S+',lambda m:m.group(1)+want,t,count=1)
     if n==t: return False
-    wtext(f,n,0o644); run('systemctl','restart','stunnel4'); return True
+    wtext(f,n,0o644); run('systemctl','restart','alecsui-stunnel'); return True
 def h_busy():
     """Programs other than AlecsUI's own that sit on TCP 443 or 80."""
     L=ss_listeners(); bad=[]
     for p in (443,80):
         g=L.get(('tcp',p))
-        if g and g not in ('stunnel4','stunnel','haproxy','python3','?'): bad.append('%d (%s)'%(p,g))
+        if g and g not in ('alecsui-stunnel','stunnel','haproxy','python3','?'): bad.append('%d (%s)'%(p,g))
     for k,d in (('VWSTLS_PORT',8443),('VTCP_PORT',2053),('VWS_PORT',8080),('REALITY_PORT',8444),('TROJAN_PORT',2096),('WS_PORT',8880),('WSTLS_PORT',2083),('PANEL_PORT',0)):
         if P(k,d) in (443,80): bad.append('%d (used by %s in AlecsUI, change it with menu → Port change)'%(P(k,d),k.replace('_PORT','')))
     return bad
@@ -2922,6 +3458,16 @@ def backup_obj():
     pl=pay_load()
     if pl: o['payloads']=pl
     return o
+def backup_encrypt(raw, passphrase):
+    """Encrypt backup JSON with passphrase (Fernet-like via PBKDF2+AES if cryptography missing: XOR fallback refused)."""
+    import hashlib, os
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except Exception:
+        raise Err('Encrypted backups need the cryptography package (apt install python3-cryptography)')
+    salt=os.urandom(16); key=hashlib.pbkdf2_hmac('sha256', passphrase.encode(), salt, 200000, 32)
+    aes=AESGCM(key); nonce=os.urandom(12); ct=aes.encrypt(nonce, raw if isinstance(raw,bytes) else raw.encode(), None)
+    return b'ALECSUI1'+salt+nonce+ct
 def backup_file(path=None):
     os.makedirs(BKD,exist_ok=True); os.chmod(BKD,0o700)
     path=path or BKD+'/alecsui-'+today()+'.json'; wjson(path,backup_obj())
@@ -3025,8 +3571,8 @@ def listening(udp=False):
             p=l.split()
             if len(p)>3 and p[3]==('07' if udp else '0A'): s.add(int(p[1].rsplit(':',1)[1],16))
     return s
-UNITS=['ssh','sshd','stunnel4','ws-ssh','badudp','fail2ban','xray','alecsui-ovpn@rx1194','alecsui-ovpn@rx110','squid','alecsui-hy2','alecsui-wg','alecsui-dns']
-RESTART={'haproxy','ssh','stunnel4','ws-ssh','badudp','fail2ban','xray','alecsui-ovpn@rx1194','alecsui-ovpn@rx110','squid','alecsui-hy2','alecsui-wg','alecsui-dns'}
+UNITS=['ssh','sshd','alecsui-stunnel','ws-ssh','badudp','fail2ban','xray','alecsui-ovpn@rx1194','alecsui-ovpn@rx110','squid','alecsui-hy2','alecsui-wg','alecsui-dns']
+RESTART={'haproxy','ssh','alecsui-stunnel','ws-ssh','badudp','fail2ban','xray','alecsui-ovpn@rx1194','alecsui-ovpn@rx110','squid','alecsui-hy2','alecsui-wg','alecsui-dns'}
 def units():
     st={}
     for blk in run('systemctl','show','-p','Id,LoadState,ActiveState',*[u+'.service' for u in UNITS]).stdout.strip().split('\n\n'):
@@ -3048,8 +3594,8 @@ def services():
             if x in st and st[x][0] not in ('not-found',''): return st[x]
         return ('not-found','inactive')
     out=[]
-    for name,u,port in [('SSH','ssh',P('SSH_PORT',22)),('SSL','stunnel4',P('SSL_PORT',443)),('SSH WS','ws-ssh',P('WS_PORT',8880)),
-                        ('SSH WS TLS','stunnel4',P('WSTLS_PORT',2083)),('UDPGW','badudp',P('UDPGW_PORT',7300)),('Fail2ban','fail2ban',0),
+    for name,u,port in [('SSH','ssh',P('SSH_PORT',22)),('SSL','alecsui-stunnel',P('SSL_PORT',443)),('SSH WS','ws-ssh',P('WS_PORT',8880)),
+                        ('SSH WS TLS','alecsui-stunnel',P('WSTLS_PORT',2083)),('UDPGW','badudp',P('UDPGW_PORT',7300)),('Fail2ban','fail2ban',0),
                         *xsvc(),
                         ('OpenVPN TCP','alecsui-ovpn@rx1194',P('OVPN1_PORT',1194)),('OpenVPN TCP','alecsui-ovpn@rx110',P('OVPN2_PORT',110)),('HTTP proxy (Squid)','squid',P('SQUID_PORT',3128)),('Hysteria2 UDP','alecsui-hy2',-hyport()),('WireGuard UDP','alecsui-wg',-wgport()),('DNS tunnel','alecsui-dns',-5300)]:
         l,a=s(u); up_=port<0; port=abs(port)
@@ -3321,7 +3867,7 @@ def health_check():
         if v>=90 and not was: HEALTH['bad'][k]=time.time(); tg_send('⚠️ AlecsUI alert: %s is at %.0f%% on %s'%(lab,v,INFO.get('host','server')))
         elif v<80 and was: HEALTH['bad'].pop(k,None); tg_send('✅ AlecsUI: %s is back to normal (%.0f%%)'%(lab,v))
     st=units()
-    for name,u in (('Xray','xray'),('SSH WebSocket','ws-ssh'),('SSL (stunnel)','stunnel4'),('UDPGW','badudp'),('SSH','ssh')):
+    for name,u in (('Xray','xray'),('SSH WebSocket','ws-ssh'),('SSL (stunnel)','alecsui-stunnel'),('UDPGW','badudp'),('SSH','ssh')):
         if u=='ssh' and (st.get('ssh') or ('',))[0] in ('not-found',''): u='sshd'
         x=st.get(u)
         if not x or x[0] in ('not-found',''): continue
@@ -3773,7 +4319,7 @@ def panel_path(d):
     threading.Thread(target=later,daemon=True).start(); return {'ok':1,'path':p}
 
 # ---------- logs viewer ----------
-LOGSRC={'xray':['xray'],'panel':['tunnel-panel'],'ws':['ws-ssh'],'ssl':['stunnel4'],'udpgw':['badudp'],'ssh':['ssh','sshd']}
+LOGSRC={'xray':['xray'],'panel':['tunnel-panel'],'ws':['ws-ssh'],'ssl':['alecsui-stunnel'],'udpgw':['badudp'],'ssh':['ssh','sshd']}
 def logview(d):
     src=str(d.get('src','xray')); n=ival(d,'n',20,2000,200); q=str(d.get('q','')).strip().lower()[:80]
     if src=='access':
@@ -3792,6 +4338,10 @@ def logview(d):
 # ---------- http ----------
 BASE='/'+E.get('WEB_PATH','panel').strip('/')+'/'
 SESS={}; FAIL={}
+def csrf_new(): return secrets.token_hex(32)
+def csrf_ok(tok, got):
+    s=SESS.get(tok) if tok else None
+    return bool(s) and hmac.compare_digest(str(s.get('csrf','')), str(got or ''))
 CSP="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:"
 class Hd(BaseHTTPRequestHandler):
     timeout=20; server_version='nginx'; sys_version=''
@@ -3869,7 +4419,10 @@ class Hd(BaseHTTPRequestHandler):
         if r=='/api/hist': return self.out(200,HM) if self.authed() else self.out(401,{'e':'login'})
         if r=='/api/state':
             if not self.authed(): return self.out(401,{'e':'login'})
-            m=re.search(r'[?&]uh=([0-9a-f]{16})',self.path); return self.out(200,state(m[1] if m else ''))
+            m=re.search(r'[?&]uh=([0-9a-f]{16})',self.path); o=state(m[1] if m else '')
+            s=SESS.get(self.tok()) or {}; 
+            if not s.get('csrf'): s['csrf']=csrf_new(); SESS[self.tok()]=s
+            o['csrf']=s['csrf']; return self.out(200,o)
         if r=='/api/backup':
             if not self.authed(): return self.out(401,{'e':'login'})
             b=json.dumps(backup_obj(),indent=1).encode()
@@ -3902,6 +4455,17 @@ class Hd(BaseHTTPRequestHandler):
             r=self.route()
             if r is None or r=='redir': return self.nf()
             if self.headers.get('X-Req')!='1': return self.out(403,{'e':'bad request'})
+            # Soft CSRF: mutating panel API must come from same origin (or missing Origin on non-browser clients)
+            if r and r.startswith('/api/') and r!='/api/login':
+                origin=(self.headers.get('Origin') or self.headers.get('Referer') or '').strip()
+                if origin:
+                    host=(self.headers.get('Host') or '').split(':')[0].lower()
+                    try:
+                        from urllib.parse import urlparse
+                        oh=urlparse(origin).hostname or ''
+                    except Exception: oh=''
+                    if oh and host and oh.lower()!=host and oh.lower() not in ('localhost','127.0.0.1'):
+                        return self.out(403,{'e':'bad origin'})
             n=int(self.headers.get('Content-Length',0) or 0)
             if n>(16<<20 if r in ('/api/restore','/api/csv-import') else 65536): return self.out(413,{'e':'Request too large'})
             d=json.loads(self.rfile.read(n) or b'{}')
@@ -3932,10 +4496,14 @@ class Hd(BaseHTTPRequestHandler):
                 tg_send('AlecsUI panel login\nUser: %s\nIP: %s\nTime: %s'%(curuser(),ip,datetime.datetime.now().strftime('%Y-%m-%d %H:%M')))
                 FAIL.pop(ip,None); t=secrets.token_hex(24); now=time.time()
                 for k in [k for k,v in SESS.items() if v['exp']<now]: SESS.pop(k,None)
-                SESS[t]={'exp':now+43200,'ip':ip,'ua':self.headers.get('User-Agent','')[:160],'t':int(now)}; login_log(ip,curuser(),'OK',self.headers.get('User-Agent',''))
-                return self.out(200,{'ok':1},ck='sid=%s; HttpOnly; Secure; SameSite=Strict; Path=%s; Max-Age=43200'%(t,BASE))
+                ct=csrf_new(); SESS[t]={'exp':now+43200,'ip':ip,'ua':self.headers.get('User-Agent','')[:160],'t':int(now),'csrf':ct}; login_log(ip,curuser(),'OK',self.headers.get('User-Agent',''))
+                return self.out(200,{'ok':1,'csrf':ct},ck='sid=%s; HttpOnly; Secure; SameSite=Strict; Path=%s; Max-Age=43200'%(t,BASE))
             if not self.authed(): return self.out(401,{'e':'login'})
-            if r=='/api/logout': SESS.pop(self.tok(),None); return self.out(200,{'ok':1})
+            if r not in ('/api/logout','/api/state','/api/hist','/api/brand','/api/captcha') and r.startswith('/api/'):
+                if not csrf_ok(self.tok(), d.get('csrf') or self.headers.get('X-CSRF')): return self.out(403,{'e':'bad csrf'})
+            if r=='/api/logout':
+                SESS.pop(self.tok(),None)
+                return self.out(200,{'ok':1},ck='sid=; HttpOnly; Secure; SameSite=Strict; Path=%s; Max-Age=0'%BASE)
             if r=='/api/user/detail': return self.out(200,detail(str(d.get('name',''))))
             res=self.api(r,d); txt=act_desc(r,d,res)
             if txt: activity(self.client_address[0],txt)
@@ -4286,9 +4854,9 @@ a.btn{text-decoration:none;color:var(--t)}a.btn.pri{color:#fff}
 <label for="lp">Password</label><div class="fi"><span data-i="lock"></span><input id="lp" type="password" autocomplete="current-password"><button type="button" class="ib" id="lpe" aria-label="Show password"></button></div>
 <div id="lcw" hidden><label for="lc">6-digit code from your authenticator app</label><div class="fi"><span data-i="shield"></span><input id="lc" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div></div>
 <div id="capw" hidden><label for="lcap">Type the letters from the picture</label><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><img id="capi" alt="Security check picture" width="200" height="64" style="border-radius:8px;max-width:100%"><button type="button" class="ib" id="capr" aria-label="Show a new picture"></button></div><div class="fi"><span data-i="shield"></span><input id="lcap" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="8"></div></div>
-<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.8</p></form></div>
-<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.8</a></aside>
-<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.8</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.8</a></main><nav id="bn" aria-label="Main"></nav></div>
+<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.2</p></form></div>
+<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.2</a></aside>
+<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.2</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.2</a></main><nav id="bn" aria-label="Main"></nav></div>
 <div id="dt" hidden><div class="dts"><div class="dth"><b>User details</b><button class="btn sm" id="dx" aria-label="Close">Close</button></div><div id="dtb"></div></div></div>
 <div id="md" hidden><form class="card" id="mf"></form></div>
 <div id="sxo" hidden><div class="sxp" role="dialog" aria-label="Search"><div class="fi"><span data-i="search"></span><input id="sxi" placeholder="Search users, settings, tools..." autocomplete="off" spellcheck="false" aria-label="Search"><button type="button" class="btn sm" id="sxx">Esc</button></div><div id="sxr" role="listbox"></div></div></div>
@@ -4303,7 +4871,8 @@ const I=(k,s=18)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="non
 const fb=(b,s='')=>{const u=['B','KB','MB','GB','TB'];let i=0;b=+b||0;while(b>=1024&&i<4){b/=1024;i++}return (i?b.toFixed(2):b.toFixed(0))+' '+u[i]+s};
 const dur=s=>{s=Math.floor(s||0);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?`${d}d ${h}h`:h?`${h}h ${m}m`:m?`${m}m`:`${s}s`};
 const pct=(a,b)=>b?a/b*100:0,avg=a=>a&&a.length?a.reduce((x,y)=>x+y,0)/a.length:0,peak=a=>a&&a.length?Math.max(...a):0;
-const api=async(p,d)=>{const r=await fetch(p,{method:'POST',headers:{'X-Req':'1','Content-Type':'application/json'},body:JSON.stringify(d||{})});const j=await r.json().catch(()=>({}));if(r.status==401&&p!='api/login'){show(false);throw Error('Please log in again')}if(!r.ok)throw Error(j.e||'Error '+r.status);return j};
+window.CSRF=window.CSRF||sessionStorage.getItem('alecsui_csrf')||'';
+const api=async(p,d)=>{const body=Object.assign({},d||{});if(window.CSRF)body.csrf=window.CSRF;const r=await fetch(p,{method:'POST',headers:{'X-Req':'1','X-CSRF':window.CSRF||'','Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));if(j.csrf){window.CSRF=j.csrf;try{sessionStorage.setItem('alecsui_csrf',j.csrf)}catch(e){}}if(r.status==401&&p!='api/login'){show(false);throw Error('Please log in again')}if(!r.ok)throw Error(j.e||'Error '+r.status);return j};
 function toast(t,e){const o=document.createElement('div');o.className='toast'+(e?' e':'');o.setAttribute('role','status');o.textContent=t;document.body.append(o);setTimeout(()=>o.remove(),e?6000:2200)}
 let D=null,pg=(()=>{try{const h=decodeURIComponent(location.hash.slice(1));return /^(ov|ib|st|on|sc|us:(v2ray|ssh|ovpn|hy2|wg|dns))$/.test(h)?h:'ov'}catch(e){return 'ov'}})(),hideIp=true,gid=0,SAC=null,RG=ls('rx-range')||'live',HMD=null,HMT=0;
 async function loadHist(){try{const r=await fetch('api/hist',{cache:'no-store'});if(r.ok){HMD=await r.json();HMT=Date.now()}}catch(e){}}const show=v=>{$('#lg').hidden=v;$('#app').hidden=!v};
@@ -4352,7 +4921,7 @@ function hpush(st){if(HNAV)return;try{const u='#'+encodeURIComponent(st.p||'ov')
 function spush(){hpush({p:'st',t:ls('rx-stab')||'general',g:GSEL||null})}
 window.addEventListener('popstate',e=>{const st=e.state;if(!st||!st.p)return;HNAV=true;try{if(!$('#md').hidden)$('#md').hidden=true;if(!$('#dt').hidden&&$('#dx'))$('#dx').click();const q=$('#qrm');if(q&&!q.hidden)q.hidden=true;
 const cur=pg=='us'?'us:'+UV.kind:pg;if(cur!=st.p)go(st.p);if(st.p=='st'&&window.STAB){GSEL=st.g||null;STAB(st.t||'general');window.scrollTo(0,0)}}finally{HNAV=false}});
-async function load(){try{const r=await fetch('api/state'+(D&&D.uh&&D.users?'?uh='+D.uh:''),{cache:'no-store'});if(r.status==401)return show(false);{const n=await r.json();if(!n.users&&D&&D.users)n.users=D.users;D=n}const sb=D.set;if(sb.brand!=BR.brand||sb.tagline!=BR.tagline||sb.accent!=SAC){SAC=sb.accent;applyBrand(sb)}
+async function load(){try{const r=await fetch('api/state'+(D&&D.uh&&D.users?'?uh='+D.uh:''),{cache:'no-store'});if(r.status==401)return show(false);{const n=await r.json();if(n.csrf){window.CSRF=n.csrf;try{sessionStorage.setItem('alecsui_csrf',n.csrf)}catch(e){}}if(!n.users&&D&&D.users)n.users=D.users;D=n}const sb=D.set;if(sb.brand!=BR.brand||sb.tagline!=BR.tagline||sb.accent!=SAC){SAC=sb.accent;applyBrand(sb)}
 if(pg=='ov'&&RG!='live'&&Date.now()-HMT>60000)await loadHist();if($('#app').hidden){show(true);go(pg)}else render();hdr();$('#upd').textContent='Live · '+new Date().toLocaleTimeString()}catch(e){$('#upd').textContent='Connection lost, retrying...'}}
 function hdr(){const c=D.cert;$('#cbn').innerHTML=c.days!=null&&c.days<=30?`<div class="banner ${c.days<0?'e':'w'}" role="status">${I('cert',17)}<div><b>${c.days<0?'Your SSL certificate has expired.':'Your SSL certificate expires in '+c.days+' day'+(c.days==1?'':'s')+'.'}</b> ${X(c.name)} · Renew it, then paste the new one in Settings or use menu → 7 on the server.</div></div>`:'';
 const x=D.svc.find(s=>s.unit=='xray'),on=x&&x.st=='RUNNING';$('#xs').innerHTML=`<span class="dot" style="background:${on?'var(--g)':'var(--r)'}"></span>Xray · ${on?'Running':'Stopped'} <span class="m">v${X(D.xray.ver||'?')}</span>`}
@@ -5018,7 +5587,7 @@ const AP=(u,k,v)=>{const p=v||u.ports[k],a=u.alt&&u.alt[k];return a?p+' (or '+a+
 const GL=[['pf','Panel login','key','Username, password, 2FA'],['pfc','Performance mode','bolt','Low ping, balanced or max speed'],['apf','Appearance','palette','Theme, colour, brand name'],['pac','Panel address','key','Secret path and panel link'],['ppc','Panel and ports','shield','Panel URL, port, login protection'],['pwc','Phone app','dev','Install the panel as an app'],['cf','SSL certificate','cert','For the panel and V2Ray (Xray)'],['rf','Routing and WARP','net','Xray users: block, direct, WARP'],['fsc','Fake website','globe','What visitors see on your domain']],TMG=Object.fromEntries(GL.map(g=>[g[0],1]));
 let CAPID='';const capShow=c=>{CAPID=c.id;$('#capi').src=c.img;$('#lcap').value='';$('#capw').hidden=false};
 $('#capr').innerHTML=I('refresh',17);$('#capr').onclick=()=>fetch('api/captcha',{cache:'no-store'}).then(r=>r.json()).then(capShow).catch(()=>{});
-$('#lf').onsubmit=async e=>{e.preventDefault();const r=await fetch('api/login',{method:'POST',headers:{'X-Req':'1','Content-Type':'application/json'},body:JSON.stringify({u:$('#lu').value.trim(),p:$('#lp').value,code:$('#lc').value,cid:CAPID,cap:$('#lcap').value})});const j=await r.json().catch(()=>({}));
+$('#lf').onsubmit=async e=>{e.preventDefault();const r=await fetch('api/login',{method:'POST',headers:{'X-Req':'1','X-CSRF':(window.CSRF||''),'Content-Type':'application/json'},body:JSON.stringify({u:$('#lu').value.trim(),p:$('#lp').value,code:$('#lc').value,cid:CAPID,cap:$('#lcap').value})});const j=await r.json().catch(()=>({}));if(j.csrf){window.CSRF=j.csrf;try{sessionStorage.setItem('alecsui_csrf',j.csrf)}catch(x){}}
 if(r.ok){$('#lp').value='';$('#lc').value='';$('#lcw').hidden=true;$('#capw').hidden=true;CAPID='';$('#le').textContent='';return load()}
 if(j.captcha)capShow(j.captcha);if(j.needcap&&!j.need2fa){$('#le').textContent=j.e;$('#lcap').focus();return}
 if(j.need2fa){const first=$('#lcw').hidden;$('#lcw').hidden=false;$('#lc').focus();$('#le').textContent=first?'':j.e;return}$('#le').textContent=j.e||'Error '+r.status};
@@ -5146,7 +5715,7 @@ try{const r=await fetch(location.pathname.replace(/\/$/,'')+'/ovpn?port='+pt+'&h
 const pf=document.getElementById('pwf');if(pf){document.getElementById('ps').onchange=e=>['po','pn','pc'].forEach(i=>document.getElementById(i).type=e.target.checked?'text':'password');
 pf.onsubmit=async e=>{e.preventDefault();const g=i=>document.getElementById(i).value,pe=document.getElementById('pe'),b=pf.querySelector('.pri');pe.textContent='';
 if(g('pn')!==g('pc'))return pe.textContent='The new passwords do not match';b.disabled=true;
-try{const r=await fetch(location.pathname.replace(/\/$/,'')+'/pw',{method:'POST',headers:{'X-Req':'1','Content-Type':'application/json'},body:JSON.stringify({old:g('po'),new:g('pn')})}),j=await r.json().catch(()=>({}));
+try{const r=await fetch(location.pathname.replace(/\/$/,'')+'/pw',{method:'POST',headers:{'X-Req':'1','X-CSRF':(window.CSRF||''),'Content-Type':'application/json'},body:JSON.stringify({old:g('po'),new:g('pn')})}),j=await r.json().catch(()=>({}));
 if(!r.ok){pe.textContent=j.e||'Error '+r.status;b.disabled=false;return}const o=document.createElement('div');o.className='toast';o.textContent='Password changed';document.body.append(o);setTimeout(()=>location.reload(),1200)}catch(x){pe.textContent='Network error, try again';b.disabled=false}}}
 async function copy(t){try{await navigator.clipboard.writeText(t)}catch(e){const a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';document.body.append(a);a.select();document.execCommand('copy');a.remove()}const o=document.createElement('div');o.className='toast';o.textContent='Copied';document.body.append(o);setTimeout(()=>o.remove(),1800)}
 document.addEventListener('click',e=>{const q=e.target.closest('[data-qr]');if(q){document.getElementById('qrt').textContent=q.dataset.ql;document.getElementById('qrs').innerHTML=RXQR.svg(CP[+q.dataset.qr],300);document.getElementById('qrm').hidden=false;return}
@@ -5210,31 +5779,111 @@ chmod 700 /opt/tunnel-panel/panel.py
 [ -f /etc/tunnel/panel.pem ] || openssl req -new -x509 -days 3650 -nodes -subj "/CN=AlecsUI" -out /etc/tunnel/panel.pem -keyout /etc/tunnel/panel.pem 2>/dev/null
 chmod 600 /etc/tunnel/panel.pem
 NEWPASS=""
+# Never persist the initial admin password in a plaintext file on disk.
+rm -f /etc/tunnel/panel-login.txt 2>/dev/null || true
 if [ ! -f /etc/tunnel/panel.json ]; then
-  NEWPASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 12)
+  NEWPASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
   python3 /opt/tunnel-panel/panel.py setlogin admin "$NEWPASS"
   # Print NOW (not only at the end) — if a later step fails, the password is not lost
-  echo -e "\n\033[1;33m*** SAVE THIS LOGIN NOW ***\033[0m"
+  echo -e "\n\033[1;33m*** SAVE THIS LOGIN NOW (shown once; not stored in plaintext) ***\033[0m"
   echo -e "Panel user : \033[1;32madmin\033[0m"
   echo -e "Panel pass : \033[1;32m$NEWPASS\033[0m"
-  echo -e "\033[1;33m***************************\033[0m\n"
-  echo "admin / $NEWPASS" > /etc/tunnel/panel-login.txt
-  chmod 600 /etc/tunnel/panel-login.txt
+  echo -e "\033[1;33m********************************************************************\033[0m\n"
 else
   echo "Panel login already exists (unchanged). Reset with: menu -> 3  OR  python3 /opt/tunnel-panel/panel.py setlogin admin NEWPASS"
 fi
-cat > /etc/systemd/system/tunnel-panel.service <<S
+chmod 700 /etc/tunnel
+chmod 600 /etc/tunnel/panel.json /etc/tunnel/users.json /etc/tunnel/settings.json /etc/tunnel/config 2>/dev/null || true
+# Privileged helper (allowlisted ops over Unix socket). Panel remains root in 1.9.1 for compatibility;
+# helper is the path to drop privileges in a later release without API command injection.
+cat > /opt/tunnel-panel/helper.py <<'HELPPY'
+#!/usr/bin/env python3
+"""AlecsUI privileged helper — allowlisted system operations only."""
+import json, os, socket, subprocess, sys
+SOCK='/run/alecsui/helper.sock'
+ALLOW_UNITS=frozenset({
+ 'tunnel-panel','xray','ws-ssh','badudp','alecsui-stunnel','fail2ban','haproxy','squid',
+ 'alecsui-hy2','alecsui-wg','alecsui-dns','alecsui-ovpn@rx1194','alecsui-ovpn@rx110','ssh','sshd'})
+ALLOW_BIN=frozenset({'systemctl','useradd','userdel','usermod','chpasswd','ufw','iptables','ip6tables','sshd'})
+def ok(msg='ok',**k): return dict(ok=1,msg=msg,**k)
+def err(m): return {'ok':0,'e':m}
+def handle(req):
+    op=str(req.get('op','')); args=req.get('args') or []
+    if not isinstance(args,list) or len(args)>12: return err('bad args')
+    args=[str(a)[:200] for a in args]
+    if op=='systemctl':
+        if len(args)<2 or args[0] not in ('restart','reload','start','stop','is-active','enable','disable'): return err('bad systemctl')
+        if args[1] not in ALLOW_UNITS and not args[1].startswith('alecsui-ovpn@'): return err('unit not allowed')
+        r=subprocess.run(['systemctl']+args,capture_output=True,text=True,timeout=60)
+        return ok(stdout=r.stdout[-2000:],stderr=r.stderr[-1000:],code=r.returncode)
+    if op=='run':
+        if not args or args[0] not in ALLOW_BIN: return err('bin not allowed')
+        if args[0]=='systemctl': return handle({'op':'systemctl','args':args[1:]})
+        r=subprocess.run(args,capture_output=True,text=True,timeout=60,input=req.get('input'))
+        return ok(stdout=r.stdout[-2000:],stderr=r.stderr[-1000:],code=r.returncode)
+    if op=='ping': return ok('pong')
+    return err('unknown op')
+def main():
+    os.makedirs('/run/alecsui',exist_ok=True)
+    try: os.unlink(SOCK)
+    except FileNotFoundError: pass
+    s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.bind(SOCK); os.chmod(SOCK,0o660); s.listen(16)
+    print('alecsui-helper listening on',SOCK,flush=True)
+    while True:
+        c,_=s.accept()
+        try:
+            data=b''
+            while not data.endswith(b'\n') and len(data)<1<<20:
+                chunk=c.recv(4096)
+                if not chunk: break
+                data+=chunk
+            req=json.loads(data.decode() or '{}')
+            out=handle(req if isinstance(req,dict) else {})
+        except Exception as e:
+            out=err(str(e)[:120])
+        try: c.sendall((json.dumps(out)+'\n').encode())
+        finally: c.close()
+if __name__=='__main__': main()
+HELPPY
+chmod 700 /opt/tunnel-panel/helper.py
+cat > /etc/systemd/system/alecsui-helper.service <<S
 [Unit]
-Description=AlecsUI web panel
+Description=AlecsUI privileged helper (allowlisted)
 After=network.target
 [Service]
-ExecStart=/usr/bin/python3 /opt/tunnel-panel/panel.py run
-Restart=always
+Type=simple
+ExecStart=/usr/bin/python3 /opt/tunnel-panel/helper.py
+Restart=on-failure
 RestartSec=2
-LimitNOFILE=65535
+PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 S
+manifest_add units alecsui-helper.service
+manifest_add files /opt/tunnel-panel/helper.py
+systemctl enable alecsui-helper >/dev/null 2>&1 || true
+systemctl restart alecsui-helper 2>/dev/null || true
+cat > /etc/systemd/system/tunnel-panel.service <<S
+[Unit]
+Description=AlecsUI web panel
+After=network-online.target alecsui-helper.service
+Wants=network-online.target alecsui-helper.service
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/tunnel-panel/panel.py run
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=60
+LimitNOFILE=65535
+# v1.9.2: panel still root (compat). Helper socket is the allowlisted privileged path.
+# Full User= drop planned after VM soak tests.
+NoNewPrivileges=false
+ProtectHome=read-only
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target
+S
+manifest_add units tunnel-panel.service
 mkdir -p /etc/systemd/system/squid.service.d
 printf '[Service]\nLimitNOFILE=65535\n' > /etc/systemd/system/squid.service.d/alecsui.conf
 cat > /etc/systemd/system/alecsui-dns.service <<'S'
@@ -5292,7 +5941,7 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 S
 
-step 10 "Terminal menu"
+step 10 "Terminal menu" "Meniu terminal"
 cat > $LIB/cert-deploy.sh <<'DEPM'
 #!/bin/bash
 C=/etc/tunnel/cert
@@ -5303,12 +5952,24 @@ DEPM
 cat > $LIB/cert.sh <<'CERTM'
 #!/bin/bash
 [ "$EUID" -ne 0 ] && { echo "Please run as root"; exit 1; }
-C=/etc/tunnel/cert; LIB=/usr/local/lib/tunnel; A=/root/.acme.sh/acme.sh
+C=/etc/tunnel/cert; LIB=/usr/local/lib/tunnel; A=/root/.acme.sh/acme.sh; ACME_VER=3.1.0
 mkdir -p $C
 myip(){ curl -4 -s --max-time 5 ifconfig.me; }
 free80(){ if ss -tlnp | grep -q ':80 '; then echo "Port 80 is in use:"; ss -tlnp | grep ':80 '; return 1; fi; }
 need(){
-  [ -x $A ] || curl -fsSL https://get.acme.sh | sh >/dev/null 2>&1
+  if [ ! -x $A ]; then
+    local TD Z SUM URL
+    TD=$(mktemp -d); URL="https://github.com/acmesh-official/acme.sh/archive/refs/tags/$ACME_VER.tar.gz"
+    # ACME_VER may be unset in menu subshell — default
+    ACME_VER=${ACME_VER:-3.1.0}
+    URL="https://github.com/acmesh-official/acme.sh/archive/refs/tags/${ACME_VER}.tar.gz"
+    echo "Installing acme.sh ${ACME_VER} from GitHub (no curl|sh)..."
+    if curl -fsSL --max-time 120 -o "$TD/acme.tgz" "$URL"; then
+      tar -C "$TD" -xzf "$TD/acme.tgz"
+      ( cd "$TD/acme.sh-${ACME_VER}" && bash acme.sh --install -m admin@localhost --nocron >/dev/null 2>&1 ) || true
+    fi
+    rm -rf "$TD"
+  fi
   [ -x $A ] || { echo "acme.sh could not be installed (check internet)"; return 1; }
   $A --set-default-ca --server letsencrypt >/dev/null 2>&1
 }
@@ -5380,7 +6041,10 @@ cat > /usr/local/bin/menu <<'MAINM'
 #!/bin/bash
 [ "$EUID" -ne 0 ] && { echo "Please run as root"; exit 1; }
 CF=/etc/tunnel/config; LIB=/usr/local/lib/tunnel; PY=/opt/tunnel-panel/panel.py
-UPDATE_URL="https://raw.githubusercontent.com/alecssdeveloper1/AlecsUI/main/install.sh"
+# Prefer versioned GitHub Releases. main is only a fallback when ALECSUI_ALLOW_MAIN=1.
+UPDATE_URL="${ALECSUI_UPDATE_URL:-https://api.github.com/repos/alecssdeveloper1/AlecsUI/releases/latest}"
+UPDATE_RAW_MAIN="https://raw.githubusercontent.com/alecssdeveloper1/AlecsUI/main/install.sh"
+ALECSUI_VER_INSTALLED="1.9.2"
 G='\033[1;32m'; Y='\033[1;33m'; C='\033[1;36m'; N='\033[0m'
 . $CF
 myip(){ curl -4 -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}'; }
@@ -5392,7 +6056,7 @@ info(){
   . $CF; echo
   echo -e "Panel URL  : ${C}$(url)${N}"
   echo    "Panel user : $(python3 $PY user)  (password is stored as a hash, use option 3 to set a new one)"
-  echo -e "Services   : Panel $(on tunnel-panel)$([ -x /usr/local/bin/hysteria ] && echo " | Hysteria2 $(on alecsui-hy2)")$(command -v wg >/dev/null && echo " | WireGuard $(on alecsui-wg)")$([ -x /usr/local/bin/dnstt-server ] && echo " | DNS $(on alecsui-dns)") | Xray $(on xray) | stunnel $(on stunnel4) | WS $(on ws-ssh) | UDPGW $(on badudp)$([ -f /etc/systemd/system/alecsui-ovpn@.service ] && echo " | OpenVPN $(on alecsui-ovpn@rx1194) | Squid $(on squid)")"
+  echo -e "Services   : Panel $(on tunnel-panel)$([ -x /usr/local/bin/hysteria ] && echo " | Hysteria2 $(on alecsui-hy2)")$(command -v wg >/dev/null && echo " | WireGuard $(on alecsui-wg)")$([ -x /usr/local/bin/dnstt-server ] && echo " | DNS $(on alecsui-dns)") | Xray $(on xray) | stunnel $(on alecsui-stunnel) | WS $(on ws-ssh) | UDPGW $(on badudp)$([ -f /etc/systemd/system/alecsui-ovpn@.service ] && echo " | OpenVPN $(on alecsui-ovpn@rx1194) | Squid $(on squid)")"
   R=$(timeout 4 bash -c "exec 3<>/dev/tcp/127.0.0.1/$WS_PORT; printf 'GET / HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\n\\r\\n' >&3; head -c 12 <&3" 2>/dev/null)
   if [ "$R" = "HTTP/1.1 101" ]; then echo -e "SSH WS test : ${G}OK on this server${N} (if phones still cannot connect to $WS_PORT, open it in your provider firewall)"; else echo -e "SSH WS test : ${Y}FAILED${N} (try: systemctl restart ws-ssh)"; fi
   printf "%-14s: %s\n" "SSH" $SSH_PORT "SSL" $SSL_PORT "SSH WS" $WS_PORT "SSH WS TLS" $WSTLS_PORT "UDPGW" "127.0.0.1:$UDPGW_PORT" \
@@ -5403,14 +6067,18 @@ info(){
 }
 apply(){
   . $CF
-  cat > /etc/stunnel/stunnel.conf <<S
-pid = /var/run/stunnel4/stunnel4.pid
-cert = /etc/stunnel/stunnel.pem
+  mkdir -p /etc/alecsui /run/alecsui
+  local accept_ssl
+  if [ -f /etc/tunnel/h443.on ] && [ "$SSL_PORT" = 443 ]; then accept_ssl=127.0.0.1:10443; else accept_ssl=$SSL_PORT; fi
+  cat > /etc/alecsui/stunnel.conf <<S
+; AlecsUI dedicated stunnel
+pid = /run/alecsui/stunnel.pid
+cert = /etc/alecsui/stunnel.pem
 sslVersionMin = TLSv1.2
 socket = l:TCP_NODELAY=1
 socket = r:TCP_NODELAY=1
 [ssh-ssl]
-accept = $( [ -f /etc/tunnel/h443.on ] && [ "$SSL_PORT" = 443 ] && echo 127.0.0.1:10443 || echo $SSL_PORT )
+accept = $accept_ssl
 connect = 127.0.0.1:$SSH_PORT
 [ssh-ws-tls]
 accept = $WSTLS_PORT
@@ -5418,7 +6086,7 @@ connect = 127.0.0.1:$WS_PORT
 S
   sed -i "s|^ExecStart=.*|ExecStart=/usr/bin/python3 /usr/local/bin/ws-ssh.py $WS_PORT $SSH_PORT|" /etc/systemd/system/ws-ssh.service
   systemctl daemon-reload
-  systemctl restart stunnel4 ws-ssh tunnel-panel
+  systemctl restart alecsui-stunnel ws-ssh tunnel-panel
 }
 hop(){
   read -rp "New hopping range like 20000-30000 (0 = off) [${HY_HOP:-20000-30000}]: " r
@@ -5472,14 +6140,14 @@ srv(){
   cat <<T
 
 ===== SERVICE RESTART =====
-1) All   2) SSH   3) stunnel4 (SSL + WS TLS)   4) SSH WS
+1) All   2) SSH   3) alecsui-stunnel (SSL + WS TLS)   4) SSH WS
 5) UDPGW   6) Xray   7) Panel   8) Fail2ban   9) OpenVPN + HTTP proxy   10) Hysteria2   11) DNS tunnel   12) WireGuard   0) Back
 T
   read -rp "Option: " o
   case $o in
-    1) systemctl restart ssh 2>/dev/null || systemctl restart sshd; systemctl restart stunnel4 ws-ssh badudp xray tunnel-panel fail2ban; systemctl restart 'alecsui-ovpn@*' squid alecsui-hy2 2>/dev/null; command -v wg >/dev/null && systemctl restart alecsui-wg 2>/dev/null; systemctl is-enabled --quiet alecsui-dns 2>/dev/null && systemctl restart alecsui-dns;;
+    1) systemctl restart ssh 2>/dev/null || systemctl restart sshd; systemctl restart alecsui-stunnel ws-ssh badudp xray tunnel-panel fail2ban; systemctl restart 'alecsui-ovpn@*' squid alecsui-hy2 2>/dev/null; command -v wg >/dev/null && systemctl restart alecsui-wg 2>/dev/null; systemctl is-enabled --quiet alecsui-dns 2>/dev/null && systemctl restart alecsui-dns;;
     2) systemctl restart ssh 2>/dev/null || systemctl restart sshd;;
-    3) systemctl restart stunnel4;; 4) systemctl restart ws-ssh;; 5) systemctl restart badudp;;
+    3) systemctl restart alecsui-stunnel;; 4) systemctl restart ws-ssh;; 5) systemctl restart badudp;;
     6) systemctl restart xray;; 7) systemctl restart tunnel-panel;; 8) systemctl restart fail2ban;; 9) systemctl restart 'alecsui-ovpn@*' squid;; 10) systemctl restart alecsui-hy2;; 11) systemctl restart alecsui-dns;; 12) systemctl restart alecsui-wg;;
     *) return;;
   esac
@@ -5567,18 +6235,41 @@ T
   case $o in 1) upd;; 2) xupd;; 3) gupd;; 4) xback;; esac
 }
 upd(){
-  local f=/root/install.sh
-  if [ -n "$UPDATE_URL" ]; then
-    echo "Downloading the latest installer..."
-    curl -fsSL "$UPDATE_URL" -o /tmp/alecsui-install.sh && f=/tmp/alecsui-install.sh || { echo "Download failed"; return; }
+  local f=/root/install.sh meta tag asset_url sum_url expect got ver_new
+  echo "Checking AlecsUI releases (installed menu: $ALECSUI_VER_INSTALLED)..."
+  meta=$(curl -fsSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: AlecsUI' --max-time 30 "$UPDATE_URL" 2>/dev/null || true)
+  if [ -n "$meta" ] && echo "$meta" | grep -q '"tag_name"'; then
+    tag=$(echo "$meta" | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)
+    asset_url=$(echo "$meta" | grep -o '"browser_download_url": *"[^"]*install\.sh"' | head -1 | cut -d'"' -f4)
+    [ -z "$asset_url" ] && asset_url="https://github.com/alecssdeveloper1/AlecsUI/releases/download/${tag}/install.sh"
+    sum_url="${asset_url}.sha256"
+    echo "Latest release: $tag"
+    if ! curl -fsSL --max-time 120 -o /tmp/alecsui-install.sh "$asset_url"; then echo "Download failed: $asset_url"; return; fi
+    f=/tmp/alecsui-install.sh
+    if curl -fsSL --max-time 30 -o /tmp/alecsui-install.sh.sha256 "$sum_url" 2>/dev/null; then
+      expect=$(awk '{print $1}' /tmp/alecsui-install.sh.sha256 | head -1 | tr 'A-F' 'a-f')
+      got=$(sha256sum "$f" | awk '{print $1}')
+      if [ -z "$expect" ] || [ "$expect" != "$got" ]; then
+        echo "SHA256 check failed for release installer — update aborted."; rm -f "$f"; return
+      fi
+      echo "Release installer SHA256 OK"
+    else
+      echo -e "${Y}WARNING: no install.sh.sha256 on this release. Refusing unsigned/main fallback unless you set ALECSUI_ALLOW_MAIN=1.${N}"
+      if [ "${ALECSUI_ALLOW_MAIN:-0}" != 1 ]; then rm -f "$f"; return; fi
+    fi
+  elif [ "${ALECSUI_ALLOW_MAIN:-0}" = 1 ]; then
+    echo -e "${Y}No GitHub release found — using main branch (ALECSUI_ALLOW_MAIN=1).${N}"
+    curl -fsSL "$UPDATE_RAW_MAIN" -o /tmp/alecsui-install.sh && f=/tmp/alecsui-install.sh || { echo "Download failed"; return; }
   else
-    echo "Upload the new install.sh to the server first."
+    echo "Could not read GitHub Releases. Upload install.sh manually, or set ALECSUI_ALLOW_MAIN=1 to pull main (less safe)."
     read -rp "Path to the new installer [$f]: " x; f=${x:-$f}
   fi
   [ -f "$f" ] || { echo "File not found: $f"; return; }
-  head -5 "$f" | grep -q "AlecsUI v[0-9.]* installer" || { echo "This is not a AlecsUI installer"; return; }
-  bash -n "$f" 2>/dev/null || { echo "The file is broken (maybe it was cut while pasting)"; return; }
-  echo "Installed: $(grep -o 'AlecsUI v[0-9.]*' /opt/tunnel-panel/index.html | head -1)   New: $(grep -o 'AlecsUI v[0-9.]*' "$f" | head -1)"
+  head -8 "$f" | grep -qE "AlecsUI v[0-9.]+ installer" || { echo "This is not a AlecsUI installer"; return; }
+  bash -n "$f" 2>/dev/null || { echo "The file is broken (syntax error)"; return; }
+  ver_new=$(grep -oE 'ALECSUI_VER=[0-9.]+' "$f" | head -1 | cut -d= -f2)
+  [ -z "$ver_new" ] && ver_new=$(grep -oE 'AlecsUI v[0-9.]+' "$f" | head -1 | sed 's/AlecsUI v//')
+  echo "Installed: $ALECSUI_VER_INSTALLED   New: ${ver_new:-unknown}"
   read -rp "Update now? Users, settings, ports and certificate are kept. (y/N): " y; [ "$y" = y ] || { echo "Cancelled"; return; }
   b=/root/alecsui-backup-before-update-$(date +%F-%H%M).json
   python3 $PY backup "$b" >/dev/null 2>&1 && chmod 600 "$b" && echo "Backup saved: $b"
@@ -5607,28 +6298,50 @@ T
   case $o in 1) python3 $PY h443 on;; 2) python3 $PY h443 off;; esac
 }
 uninst(){
-  echo -e "${Y}This removes the panel, Xray, OpenVPN, Hysteria2, WireGuard, the DNS tunnel, the SSH WS/SSL tunnels and all panel users.${N}"
-  read -rp "Type yes to confirm: " y; [ "$y" = yes ] || { echo "Cancelled"; return; }
+  echo -e "${Y}This removes ONLY AlecsUI resources listed in $MANIFEST (or the known set). External stunnel4/SSH/firewall policies are restored when originals exist.${N}"
+  read -rp "Type DELETE-USERS to also remove tunnel Linux users (or keep to preserve users): " yu
+  read -rp "Type yes to confirm uninstall: " y; [ "$y" = yes ] || { echo "Cancelled"; return; }
   f=/root/alecsui-backup-before-uninstall-$(date +%F-%H%M).json
-  python3 $PY backup "$f" >/dev/null 2>&1 && chmod 600 "$f" && echo "A final backup was saved to $f"
-  systemctl disable --now tunnel-panel xray ws-ssh badudp stunnel4 >/dev/null 2>&1
-  for u in $(systemctl list-units --all --plain --no-legend 'alecsui-ovpn@*' 2>/dev/null | awk '{print $1}') alecsui-ovpn@rx1194 alecsui-ovpn@rx110; do systemctl disable --now "$u" >/dev/null 2>&1; done
-  systemctl disable --now alecsui-hy2 alecsui-wg alecsui-dns >/dev/null 2>&1
-  if [ -f /etc/tunnel/h443.on ]; then systemctl disable --now haproxy >/dev/null 2>&1; [ -f /etc/haproxy/haproxy.cfg.orig ] && mv -f /etc/haproxy/haproxy.cfg.orig /etc/haproxy/haproxy.cfg; rm -f /etc/haproxy/alecsui.pem; fi
-  python3 $PY purge 2>/dev/null
-  if [ -f /etc/squid/squid.conf.orig ]; then mv -f /etc/squid/squid.conf.orig /etc/squid/squid.conf; systemctl disable --now squid >/dev/null 2>&1; fi
-  rm -f /etc/systemd/system/alecsui-ovpn@.service /etc/systemd/system/alecsui-hy2.service /usr/local/bin/hysteria /etc/systemd/system/alecsui-tuic.service /usr/local/bin/tuic-server /etc/systemd/system/alecsui-wg.service /etc/sysctl.d/99-alecsui-wg.conf /etc/systemd/system/alecsui-dns.service /usr/local/bin/dnstt-server /etc/sysctl.d/99-alecsui-ovpn.conf /etc/sysctl.d/99-zz-alecsui-perf.conf
-  rm -f /etc/systemd/system/{tunnel-panel,xray,ws-ssh,badudp}.service /etc/stunnel/stunnel.conf /etc/cron.d/tunnel-expire
-  rm -f /etc/cron.d/alecsui-reboot; rm -rf /opt/tunnel-panel /usr/local/etc/xray /usr/local/bin/xray /usr/local/bin/ws-ssh.py /usr/local/bin/badvpn-udpgw /usr/local/bin/geoip.dat /usr/local/bin/geosite.dat /etc/tunnel /etc/tunnel-users /var/log/xray $LIB
+  python3 $PY backup "$f" >/dev/null 2>&1 && chmod 600 "$f" && echo "External backup saved: $f"
+  # Stop only AlecsUI units
+  systemctl disable --now tunnel-panel alecsui-helper xray ws-ssh badudp alecsui-stunnel >/dev/null 2>&1 || true
+  for u in $(systemctl list-units --all --plain --no-legend 'alecsui-ovpn@*' 2>/dev/null | awk '{print $1}') alecsui-ovpn@rx1194 alecsui-ovpn@rx110; do systemctl disable --now "$u" >/dev/null 2>&1 || true; done
+  systemctl disable --now alecsui-hy2 alecsui-wg alecsui-dns >/dev/null 2>&1 || true
+  # Do NOT disable foreign stunnel4 / ssh / fail2ban
+  if [ -f /etc/tunnel/h443.on ]; then
+    systemctl disable --now haproxy >/dev/null 2>&1 || true
+    [ -f /etc/haproxy/haproxy.cfg.orig ] && mv -f /etc/haproxy/haproxy.cfg.orig /etc/haproxy/haproxy.cfg
+    rm -f /etc/haproxy/alecsui.pem
+  fi
+  if [ "$yu" = DELETE-USERS ]; then python3 $PY purge 2>/dev/null || true
+  else echo "Tunnel Linux users preserved (no purge)."; fi
+  if [ -f /etc/squid/squid.conf.orig ]; then mv -f /etc/squid/squid.conf.orig /etc/squid/squid.conf; fi
+  # Restore SSH drop-in
+  rm -f /etc/ssh/sshd_config.d/00-alecsui.conf /etc/ssh/sshd_config.d/00-tunnel.conf
+  if sshd -t 2>/dev/null; then systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true; fi
+  # Restore foreign stunnel if we preserved it
+  if [ -f /etc/tunnel/originals/stunnel.conf.pre-alecsui ]; then
+    cp -a /etc/tunnel/originals/stunnel.conf.pre-alecsui /etc/stunnel/stunnel.conf
+    echo "Restored foreign /etc/stunnel/stunnel.conf"
+  fi
+  # Remove AlecsUI-owned paths
+  rm -f /etc/systemd/system/alecsui-ovpn@.service /etc/systemd/system/alecsui-hy2.service /etc/systemd/system/alecsui-stunnel.service /etc/systemd/system/alecsui-helper.service
+  rm -f /etc/systemd/system/alecsui-wg.service /etc/systemd/system/alecsui-dns.service /etc/systemd/system/{tunnel-panel,xray,ws-ssh,badudp}.service
+  rm -f /etc/sysctl.d/99-alecsui-wg.conf /etc/sysctl.d/99-alecsui-ovpn.conf /etc/sysctl.d/99-zz-alecsui-perf.conf
+  rm -f /etc/cron.d/alecsui-reboot /etc/cron.d/tunnel-expire
+  rm -rf /opt/tunnel-panel /etc/alecsui /run/alecsui /usr/local/etc/xray /var/log/xray $LIB
+  rm -f /usr/local/bin/xray /usr/local/bin/ws-ssh.py /usr/local/bin/badvpn-udpgw /usr/local/bin/geoip.dat /usr/local/bin/geosite.dat /usr/local/bin/hysteria /usr/local/bin/dnstt-server
+  # Keep /etc/tunnel backup copy outside; remove live tree last
+  rm -rf /etc/tunnel /etc/tunnel-users
   systemctl daemon-reload
   rm -f /usr/local/bin/menu
-  echo -e "${G}Uninstalled.${N} SSH (port 22), BBR and fail2ban were kept."
+  echo -e "${G}AlecsUI uninstalled.${N} External stunnel4/SSH/fail2ban left alone. Backup: $f"
   exit 0
 }
 while true; do
   cat <<T
 
-===== AlecsUI v1.8 MENU =====
+===== AlecsUI v1.9.2 MENU =====
    github.com/alecssdeveloper1/AlecsUI
 1) Uninstall
 2) Panel info
@@ -5656,7 +6369,7 @@ T
     7) $LIB/cert.sh;;
     8) bkp;;
     9) updm;;
-    10) python3 $PY check;;
+    10) python3 $PY check; [ -f /etc/tunnel/capabilities ] && { echo; echo "Capabilities:"; cat /etc/tunnel/capabilities; };;
     11) perfm;;
     12) h443m;;
     0) exit 0;;
@@ -5666,7 +6379,8 @@ MAINM
 chmod +x $LIB/*.sh /usr/local/bin/menu
 rm -f $LIB/ssh.sh $LIB/v2ray.sh $LIB/payloads.sh $LIB/panel.sh /etc/cron.d/tunnel-expire
 
-step 11 "Services start + firewall"
+step 11 "Start services + firewall" "Pornire servicii + firewall"
+spin_start "$( [ "$UI_LANG" = ro ] && echo "Pornim serviciile…" || echo "Starting services…" )"
 systemctl daemon-reload
 systemctl enable badudp ws-ssh xray tunnel-panel >/dev/null 2>&1 || true
 if [ -c /dev/net/tun ]; then
@@ -5692,32 +6406,49 @@ fi
 [ -x /usr/local/bin/dnstt-server ] && { python3 /opt/tunnel-panel/panel.py dns-setup || true; }
 systemctl restart badudp 2>/dev/null || echo "WARNING: badudp did not start"
 systemctl restart ws-ssh 2>/dev/null || echo "WARNING: ws-ssh did not start"
-stunnel_start_ok || echo -e "\033[1;33mWARNING: stunnel4 still failed — SSH SSL / WS TLS may be down. Fix: systemctl status stunnel4\033[0m"
+stunnel_start_ok || echo -e "\033[1;33mWARNING: alecsui-stunnel still failed — SSH SSL / WS TLS may be down. Fix: systemctl status alecsui-stunnel\033[0m"
 systemctl restart tunnel-panel 2>/dev/null || echo "WARNING: tunnel-panel did not start"
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
-  for p in $SSH_PORT $SSL_PORT $WS_PORT $WSTLS_PORT $PANEL_PORT $OVPN1_PORT $OVPN2_PORT $SQUID_PORT 80; do ufw allow $p/tcp >/dev/null; done
-  ufw allow $HY_PORT/udp >/dev/null; ufw allow $WG_PORT/udp >/dev/null; ufw allow 53/udp >/dev/null; if [[ $HY_HOP =~ ^[0-9]+-[0-9]+$ ]]; then ufw allow ${HY_HOP/-/:}/udp >/dev/null; fi
+  ufw status numbered >"/root/alecsui-ufw-before-$(date +%F-%H%M).txt" 2>/dev/null || true
+  echo "UFW is active — adding AlecsUI allow rules only (existing rules kept). Backup: /root/alecsui-ufw-before-*.txt"
+  for p in $SSH_PORT $SSL_PORT $WS_PORT $WSTLS_PORT $PANEL_PORT 80; do ufw allow $p/tcp >/dev/null; done
+  if [ "${CAP_OVPN:-0}" = 1 ]; then
+    for p in $OVPN1_PORT $OVPN2_PORT $SQUID_PORT; do ufw allow $p/tcp >/dev/null; done
+  fi
+  ufw allow $HY_PORT/udp >/dev/null
+  [ "${CAP_WG:-0}" = 1 ] && ufw allow $WG_PORT/udp >/dev/null
+  ufw allow 53/udp >/dev/null
+  if [[ $HY_HOP =~ ^[0-9]+-[0-9]+$ ]]; then ufw allow ${HY_HOP/-/:}/udp >/dev/null; fi
 fi
 sleep 6
 for i in $(seq 20); do systemctl is-active --quiet xray && break; sleep 1; done
 R=$(timeout 4 bash -c "exec 3<>/dev/tcp/127.0.0.1/$WS_PORT; printf 'GET / HTTP/1.1\r\nHost: x\r\n\r\n' >&3; head -c 12 <&3" 2>/dev/null || true)
 PH=$(curl -4 -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}')
 if [ -f /etc/tunnel/cert/info ]; then NAME=; . /etc/tunnel/cert/info; [[ $NAME =~ [a-z] && $NAME != \** ]] && PH=$NAME; fi
-echo -e "\n\033[1;32m==============================\033[0m"
-echo "AlecsUI v1.8 — service status"
-for s in ssh stunnel4 ws-ssh badudp xray fail2ban tunnel-panel alecsui-ovpn@rx1194 alecsui-ovpn@rx110 squid alecsui-hy2 alecsui-wg alecsui-dns; do
-  x=$(systemctl is-active $s 2>/dev/null || true); [ $s = ssh ] && [ "$x" != active ] && x=$(systemctl is-active sshd 2>/dev/null || true); printf "%-18s: %s\n" $s "$x"
+spin_stop 1 "Services started" "Servicii pornite"
+ui_finish "$PH" "$R"
+for s in ssh alecsui-stunnel ws-ssh badudp xray fail2ban tunnel-panel alecsui-helper alecsui-ovpn@rx1194 alecsui-ovpn@rx110 squid alecsui-hy2 alecsui-wg alecsui-dns; do
+  x=$(systemctl is-active $s 2>/dev/null || true); [ $s = ssh ] && [ "$x" != active ] && x=$(systemctl is-active sshd 2>/dev/null || true)
+  if [ "$x" = active ]; then printf "  ${CG}●${C0} %-18s ${CG}%s${C0}\n" "$s" "$x"
+  else printf "  ${CY}○${C0} %-18s ${CY}%s${C0}\n" "$s" "$x"; fi
 done
-echo "SSH $SSH_PORT | SSL $SSL_PORT | WS $WS_PORT | WS TLS $WSTLS_PORT | UDPGW 127.0.0.1:$UDPGW_PORT"
-echo "V2Ray     : add your inbounds in the panel (Inbounds), then allow their ports in your provider firewall"
-echo "OpenVPN TCP $OVPN1_PORT, $OVPN2_PORT | HTTP proxy $SQUID_PORT | Hysteria2 UDP $HY_PORT (hopping $HY_HOP) | WireGuard UDP $WG_PORT"
-echo "WS test   : ${R:-fail}"
-echo "Panel     : https://$PH:$PANEL_PORT/$WEB_PATH/"
-if [ -n "$NEWPASS" ]; then echo "Login     : admin / $NEWPASS  (save this now)"; else echo "Login     : unchanged (change it with menu -> 3)"; fi
-echo "Menu      : menu"
-echo "Project   : https://github.com/alecssdeveloper1/AlecsUI"
-echo "Allow these TCP ports in your provider firewall: $SSL_PORT $WS_PORT $WSTLS_PORT $OVPN1_PORT $OVPN2_PORT $SQUID_PORT $PANEL_PORT 80"
-echo "Also allow UDP: $HY_PORT and $HY_HOP (Hysteria2), $WG_PORT (WireGuard), 53 (DNS tunnel)"
-echo "If your provider has Anti-DDoS rules per port: do not set web ports (80, 8080, 8880) to SSH, use HTTP or no rule."
-[ ! -c /dev/net/tun ] && echo "Note: OpenVPN disabled (no TUN). Prefer a KVM VPS for OpenVPN/WireGuard/BBR."
-echo -e "\033[1;32m==============================\033[0m"
+echo
+msg "${CB}Ports / Porturi${C0}" "${CB}Porturi${C0}"
+echo "  SSH $SSH_PORT | SSL $SSL_PORT | WS $WS_PORT | WS-TLS $WSTLS_PORT | UDPGW 127.0.0.1:$UDPGW_PORT"
+echo "  OpenVPN TCP $OVPN1_PORT,$OVPN2_PORT | Squid $SQUID_PORT | Hy2 UDP $HY_PORT ($HY_HOP) | WG UDP $WG_PORT"
+msg "  WS test: ${R:-fail}" "  Test WS: ${R:-fail}"
+echo
+msg "${CG}${CB}Panel:${C0}  https://$PH:$PANEL_PORT/$WEB_PATH/" "${CG}${CB}Panou:${C0}  https://$PH:$PANEL_PORT/$WEB_PATH/"
+if [ -n "$NEWPASS" ]; then
+  msg "${CY}${CB}Login:${C0}  admin / $NEWPASS  ${CD}(save now — not stored in plaintext)${C0}"       "${CY}${CB}Login:${C0}  admin / $NEWPASS  ${CD}(salvează acum — nu e păstrat în plaintext)${C0}"
+else
+  msg "${CD}Login unchanged (menu → 3 to reset)${C0}" "${CD}Login neschimbat (menu → 3 pentru reset)${C0}"
+fi
+msg "${CB}Menu:${C0}   menu" "${CB}Meniu:${C0}  menu"
+echo -e "  ${CD}https://github.com/alecssdeveloper1/AlecsUI${C0}"
+echo
+msg "${CD}Open in provider firewall — TCP: $SSL_PORT $WS_PORT $WSTLS_PORT $OVPN1_PORT $OVPN2_PORT $SQUID_PORT $PANEL_PORT 80${C0}"     "${CD}Deschide la provider — TCP: $SSL_PORT $WS_PORT $WSTLS_PORT $OVPN1_PORT $OVPN2_PORT $SQUID_PORT $PANEL_PORT 80${C0}"
+msg "${CD}UDP: $HY_PORT $HY_HOP (Hysteria2), $WG_PORT (WireGuard), 53 (DNS)${C0}"     "${CD}UDP: $HY_PORT $HY_HOP (Hysteria2), $WG_PORT (WireGuard), 53 (DNS)${C0}"
+[ ! -c /dev/net/tun ] && warn "OpenVPN disabled (no TUN). Prefer KVM." "OpenVPN dezactivat (fără TUN). Preferă KVM."
+echo -e "  ${CM}★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★${C0}"
+echo

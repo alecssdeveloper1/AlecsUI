@@ -13,7 +13,7 @@
 
 <br/>
 
-![version](https://img.shields.io/badge/version-1.8-0d9488?style=for-the-badge&logo=v&logoColor=white)
+![version](https://img.shields.io/badge/version-1.9.2-0d9488?style=for-the-badge&logo=v&logoColor=white)
 ![license](https://img.shields.io/badge/license-GPL--3.0-16a34a?style=for-the-badge&logo=gnu&logoColor=white)
 ![os](https://img.shields.io/badge/Ubuntu%20%7C%20Debian-x86__64%20%7C%20arm64-0ea5e9?style=for-the-badge&logo=linux&logoColor=white)
 ![stars](https://img.shields.io/github/stars/alecssdeveloper1/AlecsUI?style=for-the-badge&color=f59e0b&logo=github)
@@ -47,18 +47,41 @@
 
 # 🇷🇴 Română
 
-## ✨ Noutăți în 1.8
+## ✨ Noutăți în 1.9.2
 
-![New](https://img.shields.io/badge/NOU-v1.8-14b8a6?style=for-the-badge)
-![Stunnel](https://img.shields.io/badge/Stunnel-fix_443-22c55e?style=for-the-badge)
-![OpenVZ](https://img.shields.io/badge/OpenVZ-compatibil-f59e0b?style=for-the-badge)
+![New](https://img.shields.io/badge/NOU-v1.9.2-14b8a6?style=for-the-badge)
+
+- Instalator **animat** (banner, spinner, progress) cu mesaje **RO + EN**
+- Suport oficial **Ubuntu 20–26** și Debian 11+
+- Continuă hardening-ul din 1.9.1 (stunnel dedicat, SSH Match Group, CSRF, supply chain)
+
+<details>
+<summary><b>🕒 Noutăți în 1.9.1</b></summary>
+
+![New](https://img.shields.io/badge/NOU-v1.9.1-14b8a6?style=for-the-badge)
+![Security](https://img.shields.io/badge/Securitate-hardening-ef4444?style=for-the-badge)
+![Integrity](https://img.shields.io/badge/SHA256-obligatoriu-22c55e?style=for-the-badge)
+
+- Unitate dedicată **`alecsui-stunnel`** (stunnel4 străin neatins); port SSL reasignat dacă 443 e ocupat
+- SSH: **`Match Group alecsui-ssh`** (fără PasswordAuthentication global)
+- Uninstall pe manifest + restore SSH/stunnel străin; purge useri doar cu `DELETE-USERS`
+- Digest-uri **doar de pe github.com**; BadVPN commit pin; acme.sh fără `curl|sh`
+- CSRF dedicat; helper privilegiat allowlist; checks IPv4/IPv6
+- Docs: `docs/SECURITY-REPORT-1.9.1.md`, matrice compatibilitate, `tests/vm/`
+- **Nu Production Ready** până trec testele VM pe staging
+
+</details>
+
+<details>
+<summary><b>🕒 Noutăți în 1.8</b></summary>
 
 - Instalator mai inteligent: detectare VPS (OpenVZ/TUN/BBR/WireGuard)
-- Fără conflict pe portul 443 la reinstalare (oprește stunnel-ul vechi controlat)
+- Fără conflict pe portul 443 la reinstalare
 - Download Xray/Hysteria cu timeout + mirror-uri
-- Parola panoului e afișată imediat (și salvată în `/etc/tunnel/panel-login.txt`)
-- Protocoale incompatibile sunt sărite, fără a opri restul instalării
-- Branding panou/meniu: **AlecsUI v1.8**
+- Protocoale incompatibile sunt sărite
+- Branding **AlecsUI v1.8**
+
+</details>
 
 <details>
 <summary><b>🕒 Noutăți în 1.7</b></summary>
@@ -96,21 +119,59 @@
 <p align="center">
   <img src="https://img.shields.io/badge/1_comandă-instalare-22c55e?style=for-the-badge&logo=gnubash&logoColor=white"/>
   <img src="https://img.shields.io/badge/root-obligatoriu-ef4444?style=for-the-badge&logo=linux&logoColor=white"/>
-  <img src="https://img.shields.io/badge/Ubuntu_20.04%2B_%7C_Debian_11%2B-suportat-0ea5e9?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/Ubuntu_20–26_%7C_Debian_11+-suportat-0ea5e9?style=for-the-badge"/>
 </p>
 
-Rulează ca **root** pe un VPS fresh Ubuntu 20.04+ sau Debian 11+ (recomandat KVM):
+### Cerințe
+
+| | Minim | Recomandat |
+|---|---|---|
+| OS | Ubuntu 20–26 / Debian 11+ | Ubuntu 22.04 / 24.04 LTS |
+| Virt | OpenVZ/LXC (funcții limitate) | **KVM** |
+| RAM | 1 GB | 2 GB+ |
+| Disk | 10 GB | 20 GB+ |
+| Root | obligatoriu | + chei SSH pentru root |
+
+**Limitări OpenVZ/LXC:** fără TUN → OpenVPN **NOT SUPPORTED**; fără modul WireGuard → WG **NOT SUPPORTED**; BBR poate lipsi. SSH / WS / V2Ray / Hysteria2 de obicei funcționează.
+
+Rulează ca **root** pe un VPS dedicat (nu pe mașina ta de producție amestecată cu alte stack-uri critice fără backup):
 
 ```bash
+# Preferat: release versionat (după publicarea tag-ului v1.9.0)
+# curl -fsSL -o install.sh https://github.com/alecssdeveloper1/AlecsUI/releases/download/v1.9.0/install.sh
+# sha256sum -c install.sh.sha256
+# bash install.sh
+
+# Sau (dev / până există release):
 bash <(curl -fsSL https://raw.githubusercontent.com/alecssdeveloper1/AlecsUI/main/install.sh)
 ```
 
-La final primești **adresa panoului** și **login-ul**. Salvează-le.  
-Apoi tastează `menu` pe server pentru meniul din terminal.
+La final primești **adresa panoului** și **login-ul**. Salvează-le imediat (nu rămân în fișier plaintext).  
+Apoi tastează `menu` pe server.
 
-Dacă rulezi installer-ul din nou, **actualizează AlecsUI** și păstrează userii și setările.
+Dacă rulezi installer-ul din nou: **upgrade** cu păstrarea userilor, setărilor și certificatelor (+ backup automat în `/root/alecsui-preinstall-*`).
 
-După instalare, deschide **Inbounds** în panou, creează inbound-urile V2Ray, apoi atașează-le userilor V2Ray.
+După instalare: **Inbounds** → creează configurile V2Ray → atașează-le userilor.
+
+### Porturi de deschis la provider
+
+- **TCP:** SSH, SSL/443, WS, WS-TLS, panel (aleator), OpenVPN, Squid, 80 (Let's Encrypt / 443 mode)
+- **UDP:** Hysteria2 (ex. 443), hop range, WireGuard (51820), DNS 53  
+UDP 443 ≠ TCP 443 — sunt protocoale diferite.
+
+### Administrare rapidă
+
+| Acțiune | Cum |
+|---|---|
+| Panou | URL afișat la instalare (`https://IP:PORT/path/`) |
+| Meniu | `menu` ca root |
+| SSL domeniu | `menu` → 7 (Let's Encrypt) |
+| Backup | `menu` → 8 sau panou → Backup |
+| Update | `menu` → 9 (Releases + SHA256) |
+| Server check | `menu` → 10 |
+| Uninstall | `menu` → 1 (cere `yes`, face backup înainte) |
+
+Politica de securitate: [SECURITY.md](SECURITY.md). Licență: GPL-3.0 (fork modificat din ReXUI — vezi [NOTICE](NOTICE)).
 
 ## 🔥 Funcții
 
@@ -207,22 +268,21 @@ Dezinstalare, info panou, reset login (oprește și 2FA), schimbare porturi, res
 
 # 🇬🇧 English
 
-## ✨ What's new in 1.8
+## ✨ What's new in 1.9.2
 
-![New](https://img.shields.io/badge/NEW-v1.8-14b8a6?style=for-the-badge)
-![Stunnel](https://img.shields.io/badge/Stunnel-fix_443-22c55e?style=for-the-badge)
-![OpenVZ](https://img.shields.io/badge/OpenVZ-friendly-f59e0b?style=for-the-badge)
+![New](https://img.shields.io/badge/NEW-v1.9.2-14b8a6?style=for-the-badge)
 
-- Smarter installer: VPS capability checks (OpenVZ / TUN / BBR / WireGuard)
-- No more 443 conflict on reinstall (controlled stop of old stunnel only)
-- Xray/Hysteria downloads with timeouts + mirrors
-- Panel password shown immediately (also saved to `/etc/tunnel/panel-login.txt`)
-- Incompatible protocols are skipped without aborting the whole install
-- Panel/menu branding: **AlecsUI v1.8**
+- **Animated** installer (banner, spinner, progress) with **RO + EN** messages
+- Official support: **Ubuntu 20–26** and Debian 11+
+- Continues 1.9.1 hardening (dedicated stunnel, SSH Match Group, CSRF, supply chain)
 
 <details>
-<summary><b>🕒 What's new in 1.7 / 1.6 / 1.5</b></summary>
+<summary><b>🕒 What's new in 1.9.1 / 1.8 / 1.7 / 1.6 / 1.5</b></summary>
 
+- **1.9.1:** dedicated `alecsui-stunnel`, SSH Match Group, manifest uninstall, official digests, CSRF, helper
+
+
+- **1.8:** smarter installer, 443 reinstall fix, mirrors, skip unsupported protocols
 - **1.7:** Inbounds page (3X-UI style), attach inbounds per user, WebSocket CDN, compact tables, hardened Xray user + checksums
 - **1.6:** WireGuard users (own keys, QR, .conf), payload generator on SSH users, real IP for SSH users, CDN address kept on restore
 - **1.5:** 443 mode (HAProxy) with self test and rollback, CDN mode, payload builder, server check, Ports page, Performance mode
@@ -270,21 +330,35 @@ Dezinstalare, info panou, reset login (oprește și 2FA), schimbare porturi, res
 <p align="center">
   <img src="https://img.shields.io/badge/1_command-install-22c55e?style=for-the-badge&logo=gnubash&logoColor=white"/>
   <img src="https://img.shields.io/badge/root-required-ef4444?style=for-the-badge&logo=linux&logoColor=white"/>
-  <img src="https://img.shields.io/badge/Ubuntu_20.04%2B_%7C_Debian_11%2B-supported-0ea5e9?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/Ubuntu_20–26_%7C_Debian_11+-supported-0ea5e9?style=for-the-badge"/>
 </p>
 
-Run as **root** on a fresh Ubuntu 20.04+ or Debian 11+ VPS (KVM recommended):
+### Requirements
+
+| | Minimum | Recommended |
+|---|---|---|
+| OS | Ubuntu 20–26 / Debian 11+ | Ubuntu 22.04 / 24.04 LTS |
+| Virt | OpenVZ/LXC (limited) | **KVM** |
+| RAM | 1 GB | 2 GB+ |
+| Disk | 10 GB | 20 GB+ |
+| Root | required | + SSH keys for root |
+
+**OpenVZ/LXC limits:** no TUN → OpenVPN **NOT SUPPORTED**; no WireGuard module → WG **NOT SUPPORTED**; BBR may be missing. SSH / WS / V2Ray / Hysteria2 usually still work.
 
 ```bash
+# Preferred: versioned release (after tag v1.9.0 is published)
+# curl -fsSL -o install.sh https://github.com/alecssdeveloper1/AlecsUI/releases/download/v1.9.0/install.sh
+# sha256sum -c install.sh.sha256 && bash install.sh
+
+# Or (dev / until a release exists):
 bash <(curl -fsSL https://raw.githubusercontent.com/alecssdeveloper1/AlecsUI/main/install.sh)
 ```
 
-At the end you get the **panel address** and the **login**. Save them.  
-Then type `menu` on the server for the terminal menu.
+Save the panel URL and password immediately (not kept as plaintext on disk). Then run `menu`.
 
-Running the installer again **updates AlecsUI** and keeps all users and settings.
+Re-running the installer upgrades in place and keeps users/settings/certs (auto backup under `/root/alecsui-preinstall-*`).
 
-After install, open **Inbounds** in the panel, make your V2Ray inbounds, then attach them to your V2Ray users.
+Security policy: [SECURITY.md](SECURITY.md). License: GPL-3.0 (modified ReXUI fork — see [NOTICE](NOTICE)).
 
 <img src="https://user-images.githubusercontent.com/74038190/212284145-cbc325cf-53ce-4087-85ea-5c4b112e195d.gif" width="400">
 
