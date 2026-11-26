@@ -13,7 +13,7 @@
 
 <br/>
 
-![version](https://img.shields.io/badge/version-1.7-0d9488?style=for-the-badge&logo=v&logoColor=white)
+![version](https://img.shields.io/badge/version-1.8-0d9488?style=for-the-badge&logo=v&logoColor=white)
 ![license](https://img.shields.io/badge/license-GPL--3.0-16a34a?style=for-the-badge&logo=gnu&logoColor=white)
 ![os](https://img.shields.io/badge/Ubuntu%20%7C%20Debian-x86__64%20%7C%20arm64-0ea5e9?style=for-the-badge&logo=linux&logoColor=white)
 ![stars](https://img.shields.io/github/stars/alecssdeveloper1/AlecsUI?style=for-the-badge&color=f59e0b&logo=github)

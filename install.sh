@@ -1,5 +1,5 @@
 #!/bin/bash
-# AlecsUI v1.7 installer
+# AlecsUI v1.8 installer
 # Self-hosted SSH + Xray panel: SSH, SSL, SSH WebSocket (+TLS), UDPGW, Xray (VLESS XHTTP TLS / TCP TLS / Reality / XHTTP, Trojan), OpenVPN (TCP + HTTP proxy), Hysteria2 (UDP), WireGuard, DNS tunnel (dnstt) + V2Ray,
 # web panel with users, subscriptions, data and device limits, Telegram alerts, backups, 2FA, and a terminal menu.
 # Run as root on Ubuntu or Debian:  bash install.sh   (running it again updates AlecsUI and keeps users and settings)
@@ -12,7 +12,66 @@ SSL_PORT=443; WS_PORT=8880; WSTLS_PORT=2083; UDPGW_PORT=7300; VWSTLS_PORT=8443; 
 LIB=/usr/local/lib/tunnel
 XRAY_VER=v26.11.9
 step(){ echo -e "\n\033[1;36m[$1/11]\033[0m $2"; }
-busy(){ if ss -tlnp | grep ":$1 " | grep -qv -e stunnel -e python3 -e xray -e squid -e openvpn -e haproxy -e udpgw; then echo "Port $1 is already in use:"; ss -tlnp | grep ":$1 "; exit 1; fi; }
+# Foreign process on port = fail. Our stack (stunnel/xray/...) is allowed and cleaned before restart.
+busy(){ if ss -lntp 2>/dev/null | grep -E ":$1\b" | grep -Eiv 'stunnel|python3|xray|squid|openvpn|haproxy|udpgw|tunnel-panel' >/dev/null; then echo "Port $1 is already in use by another program:"; ss -lntp | grep -E ":$1\b"; exit 1; fi; }
+# Stop our stunnel cleanly so reinstall does not hit "Address already in use" on 443/2083
+stunnel_stop_clean(){
+  echo "Preparing stunnel4 (stop old process, free ports $SSL_PORT / $WSTLS_PORT)..."
+  systemctl stop stunnel4 2>/dev/null || true
+  service stunnel4 stop 2>/dev/null || true
+  # Orphan stunnel left after failed systemd restart
+  if ss -lntp 2>/dev/null | grep -E ":($SSL_PORT|$WSTLS_PORT)\b" | grep -qi stunnel; then
+    echo "Old stunnel still holds SSL/WS-TLS port, stopping it..."
+    pkill -TERM -x stunnel4 2>/dev/null || true
+    sleep 2
+  fi
+  if ss -lntp 2>/dev/null | grep -E ":($SSL_PORT|$WSTLS_PORT)\b" | grep -qi stunnel; then
+    pkill -KILL -x stunnel4 2>/dev/null || true
+    sleep 1
+  fi
+  mkdir -p /var/run/stunnel4 /run/stunnel4
+  if id stunnel4 >/dev/null 2>&1; then chown stunnel4:stunnel4 /var/run/stunnel4 /run/stunnel4 2>/dev/null || true; fi
+  chmod 755 /var/run/stunnel4 /run/stunnel4 2>/dev/null || true
+}
+stunnel_start_ok(){
+  stunnel_stop_clean
+  [ -f /etc/default/stunnel4 ] && sed -i 's/^ENABLED=0/ENABLED=1/' /etc/default/stunnel4
+  systemctl enable stunnel4 >/dev/null 2>&1 || true
+  if ! systemctl start stunnel4; then
+    echo -e "\033[1;31mERROR: stunnel4 failed to start\033[0m"
+    journalctl -u stunnel4 -n 20 --no-pager 2>/dev/null || true
+    ss -lntp | grep -E ":($SSL_PORT|$WSTLS_PORT)\b" || true
+    return 1
+  fi
+  sleep 1
+  if systemctl is-active --quiet stunnel4; then
+    echo "stunnel4 is active"
+    return 0
+  fi
+  echo -e "\033[1;31mERROR: stunnel4 is not active after start\033[0m"
+  systemctl status stunnel4 --no-pager -l 2>/dev/null || true
+  return 1
+}
+vps_probe(){
+  echo "VPS capability check..."
+  if uname -r | grep -Eqi 'vz|virtuozzo|openvz|lxc|container'; then
+    echo -e "\033[1;33mNOTE: container/OpenVZ-like kernel detected ($(uname -r)).\033[0m"
+    echo "  WireGuard / BBR / OpenVPN(TUN) may be limited. SSH, WS, V2Ray, Hysteria2 usually work."
+  fi
+  if [ ! -c /dev/net/tun ]; then
+    echo -e "\033[1;33mWARNING: /dev/net/tun missing — OpenVPN will not work.\033[0m"
+  else
+    echo "TUN: OK"
+  fi
+  if modprobe tcp_bbr 2>/dev/null; then echo "BBR module: OK"; else echo -e "\033[1;33mWARNING: BBR module missing — using default congestion control.\033[0m"; fi
+  if modprobe wireguard 2>/dev/null && ip link add rxwg-probe type wireguard 2>/dev/null; then
+    ip link del rxwg-probe 2>/dev/null || true
+    echo "WireGuard kernel: OK"
+  else
+    ip link del rxwg-probe 2>/dev/null || true
+    echo -e "\033[1;33mWARNING: WireGuard kernel support missing — WG users will not work.\033[0m"
+  fi
+}
 # Robust download for VPS with slow/blocked GitHub (timeouts + mirrors + wget fallback)
 dl(){
   local out="$1" url="$2" min="${3:-0}" u ok=0
@@ -49,9 +108,12 @@ if [ -z "$PANEL_PORT" ]; then
   while ss -tln | grep -q ":$PANEL_PORT "; do PANEL_PORT=$(shuf -i 20000-59999 -n1); done
 fi
 [ -n "$WEB_PATH" ] || WEB_PATH=$(tr -dc a-z0-9 </dev/urandom | head -c 10)
+# Free our stunnel ports before busy-check / reinstall
+stunnel_stop_clean
 for p in $SSL_PORT $WS_PORT $WSTLS_PORT $PANEL_PORT $OVPN1_PORT $OVPN2_PORT $SQUID_PORT; do busy $p; done
 export DEBIAN_FRONTEND=noninteractive
 mkdir -p /etc/tunnel/cert $LIB
+vps_probe
 
 step 1 "Packages"
 echo "Updating apt package lists..."
@@ -100,6 +162,7 @@ WG_PORT=$WG_PORT
 S
 
 step 3 "SSL + WS TLS (stunnel4, 10-year certificate)"
+stunnel_stop_clean
 [ -f /etc/stunnel/stunnel.pem ] || {
   openssl req -new -x509 -days 3650 -nodes -subj "/CN=www.google.com" -out /etc/stunnel/stunnel.pem -keyout /etc/stunnel/stunnel.pem 2>/dev/null
   chmod 600 /etc/stunnel/stunnel.pem; }
@@ -116,8 +179,9 @@ connect = 127.0.0.1:$SSH_PORT
 accept = $WSTLS_PORT
 connect = 127.0.0.1:$WS_PORT
 S
-[ -f /etc/default/stunnel4 ] && sed -i 's/ENABLED=0/ENABLED=1/' /etc/default/stunnel4
-systemctl enable stunnel4 >/dev/null 2>&1
+[ -f /etc/default/stunnel4 ] && sed -i 's/^ENABLED=0/ENABLED=1/' /etc/default/stunnel4
+# Start early so we fail fast with a clear message if SSL ports conflict
+stunnel_start_ok || echo -e "\033[1;33mWARNING: stunnel4 not running yet; will retry at the end.\033[0m"
 
 step 4 "BadVPN UDPGW"
 if [ ! -x /usr/local/bin/badvpn-udpgw ]; then
@@ -249,11 +313,18 @@ WantedBy=multi-user.target
 S
 
 step 6 "BBR + FQ"
-modprobe tcp_bbr || echo "WARNING: BBR could not be loaded on this kernel"
-echo tcp_bbr > /etc/modules-load.d/bbr.conf
+BBR_OK=0
+if modprobe tcp_bbr 2>/dev/null; then
+  BBR_OK=1
+  echo tcp_bbr > /etc/modules-load.d/bbr.conf
+  echo "BBR enabled"
+else
+  rm -f /etc/modules-load.d/bbr.conf
+  echo -e "\033[1;33mWARNING: BBR unavailable on this kernel — keeping default TCP congestion control.\033[0m"
+fi
 cat > /etc/sysctl.d/99-speed.conf <<S
 net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
+$([ "$BBR_OK" = 1 ] && echo "net.ipv4.tcp_congestion_control=bbr" || echo "# bbr unavailable on this kernel")
 net.core.rmem_max=67108864
 net.core.wmem_max=67108864
 net.ipv4.tcp_rmem=4096 87380 67108864
@@ -381,10 +452,17 @@ if [ -f /etc/systemd/system/alecsui-tuic.service ] || [ -x /usr/local/bin/tuic-s
 fi
 
 echo "WireGuard"
-apt-get install -y -qq wireguard-tools >/dev/null 2>&1 || echo "WARNING: wireguard-tools could not be installed, WireGuard users will not work"
-modprobe wireguard 2>/dev/null || true
-if command -v wg >/dev/null && ! { ip link add rxwg-test type wireguard 2>/dev/null && ip link del rxwg-test; }; then
-  ip link show rxwg >/dev/null 2>&1 || echo -e "\033[1;33mWARNING: this server's kernel has no WireGuard (common on OpenVZ / LXC). WireGuard users will not work here.\033[0m"
+WG_KERNEL_OK=0
+if modprobe wireguard 2>/dev/null && ip link add rxwg-test type wireguard 2>/dev/null; then
+  ip link del rxwg-test 2>/dev/null || true
+  WG_KERNEL_OK=1
+fi
+ip link del rxwg-test 2>/dev/null || true
+if [ "$WG_KERNEL_OK" = 1 ]; then
+  apt-get install -y -qq wireguard-tools >/dev/null 2>&1 || echo "WARNING: wireguard-tools could not be installed"
+  echo "WireGuard kernel support OK"
+else
+  echo -e "\033[1;33mWARNING: kernel has no WireGuard (common on OpenVZ/LXC). Skipping WG install; other protocols still work.\033[0m"
 fi
 
 echo "DNS tunnel (dnstt $DNSTTV)"
@@ -5581,21 +5659,32 @@ rm -f $LIB/ssh.sh $LIB/v2ray.sh $LIB/payloads.sh $LIB/panel.sh /etc/cron.d/tunne
 
 step 11 "Services start + firewall"
 systemctl daemon-reload
-systemctl enable badudp ws-ssh xray tunnel-panel >/dev/null 2>&1
-python3 /opt/tunnel-panel/panel.py ovpn-setup || true
-systemctl enable alecsui-ovpn@rx1194 alecsui-ovpn@rx110 squid >/dev/null 2>&1 || true
-systemctl restart alecsui-ovpn@rx1194 alecsui-ovpn@rx110 squid || echo "WARNING: OpenVPN or Squid did not start, see: journalctl -u alecsui-ovpn@rx1194 -u squid"
+systemctl enable badudp ws-ssh xray tunnel-panel >/dev/null 2>&1 || true
+if [ -c /dev/net/tun ]; then
+  python3 /opt/tunnel-panel/panel.py ovpn-setup || true
+  systemctl enable alecsui-ovpn@rx1194 alecsui-ovpn@rx110 squid >/dev/null 2>&1 || true
+  systemctl restart alecsui-ovpn@rx1194 alecsui-ovpn@rx110 squid 2>/dev/null || echo "WARNING: OpenVPN or Squid did not start"
+else
+  echo -e "\033[1;33mSkipping OpenVPN start (no /dev/net/tun).\033[0m"
+  systemctl enable squid >/dev/null 2>&1 || true
+  systemctl restart squid 2>/dev/null || true
+fi
 if [ -x /usr/local/bin/hysteria ]; then
   python3 /opt/tunnel-panel/panel.py hy-setup || true
   systemctl enable alecsui-hy2 >/dev/null 2>&1 || true
-  systemctl restart alecsui-hy2 || echo "WARNING: Hysteria2 did not start, see: journalctl -u alecsui-hy2"
+  systemctl restart alecsui-hy2 2>/dev/null || echo "WARNING: Hysteria2 did not start, see: journalctl -u alecsui-hy2"
 fi
-if command -v wg >/dev/null; then
+if [ "${WG_KERNEL_OK:-0}" = 1 ] && command -v wg >/dev/null; then
   systemctl enable alecsui-wg >/dev/null 2>&1 || true
-  systemctl restart alecsui-wg || echo "WARNING: WireGuard did not start, see: journalctl -u alecsui-wg"
+  systemctl restart alecsui-wg 2>/dev/null || echo "WARNING: WireGuard did not start, see: journalctl -u alecsui-wg"
+else
+  echo -e "\033[1;33mSkipping WireGuard service (no kernel support).\033[0m"
 fi
 [ -x /usr/local/bin/dnstt-server ] && { python3 /opt/tunnel-panel/panel.py dns-setup || true; }
-systemctl restart badudp ws-ssh stunnel4 tunnel-panel
+systemctl restart badudp 2>/dev/null || echo "WARNING: badudp did not start"
+systemctl restart ws-ssh 2>/dev/null || echo "WARNING: ws-ssh did not start"
+stunnel_start_ok || echo -e "\033[1;33mWARNING: stunnel4 still failed — SSH SSL / WS TLS may be down. Fix: systemctl status stunnel4\033[0m"
+systemctl restart tunnel-panel 2>/dev/null || echo "WARNING: tunnel-panel did not start"
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
   for p in $SSH_PORT $SSL_PORT $WS_PORT $WSTLS_PORT $PANEL_PORT $OVPN1_PORT $OVPN2_PORT $SQUID_PORT 80; do ufw allow $p/tcp >/dev/null; done
   ufw allow $HY_PORT/udp >/dev/null; ufw allow $WG_PORT/udp >/dev/null; ufw allow 53/udp >/dev/null; if [[ $HY_HOP =~ ^[0-9]+-[0-9]+$ ]]; then ufw allow ${HY_HOP/-/:}/udp >/dev/null; fi
@@ -5606,6 +5695,7 @@ R=$(timeout 4 bash -c "exec 3<>/dev/tcp/127.0.0.1/$WS_PORT; printf 'GET / HTTP/1
 PH=$(curl -4 -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}')
 if [ -f /etc/tunnel/cert/info ]; then NAME=; . /etc/tunnel/cert/info; [[ $NAME =~ [a-z] && $NAME != \** ]] && PH=$NAME; fi
 echo -e "\n\033[1;32m==============================\033[0m"
+echo "AlecsUI v1.8 — service status"
 for s in ssh stunnel4 ws-ssh badudp xray fail2ban tunnel-panel alecsui-ovpn@rx1194 alecsui-ovpn@rx110 squid alecsui-hy2 alecsui-wg alecsui-dns; do
   x=$(systemctl is-active $s 2>/dev/null || true); [ $s = ssh ] && [ "$x" != active ] && x=$(systemctl is-active sshd 2>/dev/null || true); printf "%-18s: %s\n" $s "$x"
 done
@@ -5620,4 +5710,5 @@ echo "Project   : https://github.com/alecssdeveloper1/AlecsUI"
 echo "Allow these TCP ports in your provider firewall: $SSL_PORT $WS_PORT $WSTLS_PORT $OVPN1_PORT $OVPN2_PORT $SQUID_PORT $PANEL_PORT 80"
 echo "Also allow UDP: $HY_PORT and $HY_HOP (Hysteria2), $WG_PORT (WireGuard), 53 (DNS tunnel)"
 echo "If your provider has Anti-DDoS rules per port: do not set web ports (80, 8080, 8880) to SSH, use HTTP or no rule."
+[ ! -c /dev/net/tun ] && echo "Note: OpenVPN disabled (no TUN). Prefer a KVM VPS for OpenVPN/WireGuard/BBR."
 echo -e "\033[1;32m==============================\033[0m"
