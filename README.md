@@ -1,20 +1,48 @@
 <div align="center">
 
-# AlecsUI
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,6,20,24&height=220&section=header&text=AlecsUI&fontSize=78&fontColor=ffffff&fontAlignY=38&desc=All-in-one%20VPN%20Panel%20·%20SSH%20·%20V2Ray%20·%20OpenVPN%20·%20WireGuard&descAlignY=58&descSize=14" width="100%" alt="AlecsUI banner"/>
 
-**One panel for SSH, V2Ray, OpenVPN, UDP, WireGuard and DNS tunnels, with a one-file installer.<br>Everything on port 443 and 80.**
+[![Typing SVG](https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=26&duration=2800&pause=900&color=14B8A6&center=true&vCenter=true&multiline=true&width=720&height=90&lines=One+panel.+All+tunnels.;Port+443+%26+80+ready.;Install+in+one+command.)](https://github.com/alecssdeveloper1/AlecsUI)
 
-SSH · SSL · WebSocket · UDPGW · V2Ray inbounds (VLESS / Trojan · TCP, XHTTP, WS · TLS, Reality · CDN) · OpenVPN (TCP + HTTP proxy) · Hysteria2 (UDP) · WireGuard · DNS tunnel + V2Ray · 443 mode (HAProxy)
+<br/>
 
-![version](https://img.shields.io/badge/version-1.7-0d9488) ![license](https://img.shields.io/badge/license-GPL--3.0-16a34a) ![os](https://img.shields.io/badge/Ubuntu%20%7C%20Debian-x86__64%20%7C%20arm64-6b7385)
+![version](https://img.shields.io/badge/version-1.7-0d9488?style=for-the-badge&logo=v&logoColor=white)
+![license](https://img.shields.io/badge/license-GPL--3.0-16a34a?style=for-the-badge&logo=gnu&logoColor=white)
+![os](https://img.shields.io/badge/Ubuntu%20%7C%20Debian-x86__64%20%7C%20arm64-0ea5e9?style=for-the-badge&logo=linux&logoColor=white)
+![stars](https://img.shields.io/github/stars/alecssdeveloper1/AlecsUI?style=for-the-badge&color=f59e0b&logo=github)
+![forks](https://img.shields.io/github/forks/alecssdeveloper1/AlecsUI?style=for-the-badge&color=ec4899&logo=github)
+
+<br/>
+
+![SSH](https://img.shields.io/badge/SSH-22%2F443-ef4444?style=flat-square&logo=ssh&logoColor=white)
+![SSL](https://img.shields.io/badge/SSL-TLS-f97316?style=flat-square&logo=letsencrypt&logoColor=white)
+![WebSocket](https://img.shields.io/badge/WebSocket-80%2F443-eab308?style=flat-square&logo=socketdotio&logoColor=black)
+![V2Ray](https://img.shields.io/badge/V2Ray-VLESS%20%7C%20Trojan-22c55e?style=flat-square&logo=v&logoColor=white)
+![Reality](https://img.shields.io/badge/Reality-TLS-14b8a6?style=flat-square)
+![OpenVPN](https://img.shields.io/badge/OpenVPN-TCP-06b6d4?style=flat-square&logo=openvpn&logoColor=white)
+![Hysteria2](https://img.shields.io/badge/Hysteria2-UDP-3b82f6?style=flat-square)
+![WireGuard](https://img.shields.io/badge/WireGuard-51820-8b5cf6?style=flat-square&logo=wireguard&logoColor=white)
+![DNS](https://img.shields.io/badge/DNS%20Tunnel-53-d946ef?style=flat-square&logo=cloudflare&logoColor=white)
+![HAProxy](https://img.shields.io/badge/443%20mode-HAProxy-f43f5e?style=flat-square&logo=nginx&logoColor=white)
+
+<br/>
+
+**One panel for SSH, V2Ray, OpenVPN, UDP, WireGuard and DNS tunnels, with a one-file installer.**  
+Everything on port **443** and **80**.
+
+<img src="https://user-images.githubusercontent.com/74038190/212284100-561aa473-3905-4a80-b561-0d28506553ee.gif" width="700">
 
 </div>
 
----
-
 <p align="center"><img src="screenshots/dashboard-dark.png" alt="AlecsUI dashboard (dark)" width="100%"></p>
 
-## What's new in 1.7
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=12,6,20&height=4" width="100%"/>
+
+## ✨ What's new in 1.7
+
+![New](https://img.shields.io/badge/NEW-v1.7-14b8a6?style=for-the-badge)
+![Inbounds](https://img.shields.io/badge/Inbounds-3X--UI%20style-8b5cf6?style=for-the-badge)
+![Security](https://img.shields.io/badge/Security-Hardened-ef4444?style=for-the-badge)
 
 - **Inbounds page (like 3X-UI):** make your own V2Ray configs. Pick **VLESS or Trojan**, the port, the transport (**TCP, XHTTP, WS, XHTTP CDN, WS CDN**) and the security (**None, TLS or Reality**). Address, Host, Path and SNI are set on the inbound
 - Fresh installs start with **no inbounds**, you make exactly the ones you want
@@ -25,7 +53,7 @@ SSH · SSL · WebSocket · UDPGW · V2Ray inbounds (VLESS / Trojan · TCP, XHTTP
 - **Teal** is the new default colour (the others are still in Settings → Appearance)
 - The browser **Back button** now goes back inside the panel
 
-**Security**
+**🔐 Security**
 - Xray now runs as its own user (`alecsui-xray`), other services cannot read its keys or config
 - Xray downloads (installer, menu and panel update) are checked against the official checksum. If the check fails, nothing is changed
 - **Restore** checks every user in the backup file and skips broken ones (it tells you how many)
@@ -33,14 +61,22 @@ SSH · SSL · WebSocket · UDPGW · V2Ray inbounds (VLESS / Trojan · TCP, XHTTP
 - Old failed-login records are cleaned up every minute, so memory stays small
 
 <details>
-<summary><b>What was new in 1.6 and 1.5</b></summary>
+<summary><b>🕒 What was new in 1.6 and 1.5</b></summary>
 
 - **1.6:** WireGuard users (own keys, QR, .conf), payload generator on SSH users, real IP for SSH users, CDN address kept on restore
 - **1.5:** 443 mode (HAProxy) with self test and rollback, real client IP behind HAProxy, CDN mode, payload builder, server check with Fix buttons, Ports page, Performance mode, Settings in 6 tabs, "No expiry" from Edit
 
 </details>
 
-## Screenshots
+<img src="https://user-images.githubusercontent.com/74038190/212284115-f47cd8ff-2ffb-4e04-b05e-b6f0c4555a7f.gif" width="100%">
+
+## 📸 Screenshots
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Desktop-UI-0ea5e9?style=for-the-badge&logo=googlechrome&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Mobile-PWA-ec4899?style=for-the-badge&logo=pwa&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Dark%20%7C%20Light-Themes-8b5cf6?style=for-the-badge&logo=palette&logoColor=white"/>
+</p>
 
 | Inbounds | Add inbound |
 |---|---|
@@ -68,9 +104,15 @@ SSH · SSL · WebSocket · UDPGW · V2Ray inbounds (VLESS / Trojan · TCP, XHTTP
 
 <sub>Screenshots use demo data.</sub>
 
----
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=6,12,24&height=4" width="100%"/>
 
-## Install
+## 🚀 Install
+
+<p align="center">
+  <img src="https://img.shields.io/badge/1_command-install-22c55e?style=for-the-badge&logo=gnubash&logoColor=white"/>
+  <img src="https://img.shields.io/badge/root-required-ef4444?style=for-the-badge&logo=linux&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Ubuntu_20.04%2B_%7C_Debian_11%2B-supported-0ea5e9?style=for-the-badge"/>
+</p>
 
 Run as **root** on a fresh Ubuntu 20.04+ or Debian 11+ VPS (KVM recommended):
 
@@ -85,11 +127,19 @@ Running the installer again **updates AlecsUI** and keeps all users and settings
 
 After install, open **Inbounds** in the panel, make your V2Ray inbounds, then attach them to your V2Ray users.
 
----
+<img src="https://user-images.githubusercontent.com/74038190/212284145-cbc325cf-53ce-4087-85ea-5c4b112e195d.gif" width="400">
 
-## Features
+## 🔥 Features
 
-**Users, one tab per protocol**
+<p align="center">
+  <img src="https://img.shields.io/badge/Users-multi%20protocol-f59e0b?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/Inbounds-custom-8b5cf6?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/443%20mode-HAProxy-06b6d4?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/CDN-Cloudflare-f97316?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/Panel-PWA-ec4899?style=for-the-badge"/>
+</p>
+
+**👥 Users, one tab per protocol**
 - **V2Ray users:** every attached inbound in one subscription link
 - **SSH users:** SSH, SSL, WebSocket, UDPGW, with ready payloads
 - **OpenVPN users:** own certificate per user, .ovpn download with port, HTTP proxy and Host (bug host)
@@ -101,25 +151,25 @@ After install, open **Inbounds** in the panel, make your V2Ray inbounds, then at
 - Disable with a reason, clone, notes, bulk actions (add days, device limit, reset, disable, delete), CSV export / import
 - Share card image with QR for WhatsApp, new link / UUID / certificate in one tap
 
-**Inbounds (V2Ray)**
+**🧩 Inbounds (V2Ray)**
 - VLESS or Trojan on any port, TCP / XHTTP / WS, None / TLS / Reality, Cloudflare CDN for XHTTP and WS
 - Address, Host, Path and SNI per inbound, on/off switch, edit and delete
 - Attach inbounds to each user, select all / clear all
 
-**443 mode (HAProxy)**
+**🛡️ 443 mode (HAProxy)**
 - TLS protocols on **443** (SSH SSL, WS TLS, V2Ray TLS inbounds, OpenVPN), plain WebSocket and V2Ray XHTTP / WS without TLS on **80**
 - Works with any SNI, the old ports stay open as a second choice, users see both
 - Checks itself on start, rolls back if a check fails, watchdog restarts it or turns it off and tells you on Telegram
 - One button in **Settings → Network ports**, or `menu` → 443 mode
 
-**CDN and payloads**
+**☁️ CDN and payloads**
 - **CDN mode:** XHTTP and WS inbounds through Cloudflare (orange cloud). Server IP stays hidden, Cloudflare hosts can be used as the address
 - **CDN address per user:** give each user the Cloudflare IP or host that works on their network
 - **Payload builder:** write payloads with ready variables ({bug}, {server}, {cdn}, ports, [crlf], [split]...), 11 presets, live preview
 - Test a payload on the server in one tap (it checks that SSH really answers)
 - Show your payloads to SSH users in their details and on their page, import / export as a file
 
-**Built for many users**
+**⚡ Built for many users**
 - Add, edit or disable users without restarting Xray: nobody else gets disconnected
 - OpenVPN runs one process per CPU core and spreads new connections between them
 - Fair share per OpenVPN user (CAKE), speed limit per UDP user
@@ -128,7 +178,7 @@ After install, open **Inbounds** in the panel, make your V2Ray inbounds, then at
 - Watchdog restarts a service that stops working and tells you on Telegram
 - **Performance mode:** Low ping, Balanced or Max speed, changed live without disconnecting anyone
 
-**Panel**
+**🖥️ Panel**
 - Dashboard with live, 1 hour and 24 hour graphs, top users, usage per protocol, server traffic
 - Online page for every protocol, kick, device limit, real IP of SSH users
 - Light, dark and black themes, accent colours (teal by default), your own brand name
@@ -136,12 +186,12 @@ After install, open **Inbounds** in the panel, make your V2Ray inbounds, then at
 - Search, logs, login history, activity log, logged-in devices
 - 2FA, captcha after wrong logins, change the secret path in one tap
 
-**User page** (opens from the user's link)
+**👤 User page** (opens from the user's link)
 - Usage, expiry, 30-day graph, configs with QR codes
 - SSH details and payloads, OpenVPN file download, DNS tunnel details
 - Announcements, renew warning, app links, change own password
 
-**Server**
+**🧰 Server**
 - Telegram alerts: logins, health, certificate, watchdog, daily report, daily backup file
 - Backup and restore (OpenVPN certificates and DNS key included)
 - **Server check:** services, Xray config, certificate, domains and DNS records (orange / grey cloud), OpenVPN network, firewall, time, disk, memory, with Fix buttons
@@ -149,9 +199,9 @@ After install, open **Inbounds** in the panel, make your V2Ray inbounds, then at
 - Speed test, disk cleanup, swap, Xray auto update with rollback
 - Let's Encrypt certificate, DuckDNS updater, fake website, BBR
 
----
+<img src="https://capsule-render.vercel.app/api?type=rect&color=gradient&customColorList=20,12,6&height=4" width="100%"/>
 
-## Default ports
+## 🔌 Default ports
 
 | Service | 443 mode | Own port (also works) |
 |---|---|---|
@@ -177,9 +227,7 @@ On 443 mode an inbound also works on 443 / 80 when it uses the main path (`/vles
 
 > **Works on the server but not from outside?** Many providers have **Anti-DDoS rules per port**. A rule that expects **SSH** on a web port (80, 8080, 8880) lets only SSH through and silently drops WebSocket and XHTTP. Set those rules to **HTTP**, or delete them.
 
----
-
-## Client apps
+## 📱 Client apps
 
 | Users | Apps |
 |---|---|
@@ -190,9 +238,7 @@ On 443 mode an inbound also works on 443 / 80 when it uses the main path (`/vles
 | WireGuard | [WireGuard](https://www.wireguard.com/install/) (Android, iPhone, PC), Hiddify, NekoBox |
 | DNS + V2Ray | HTTP Custom (SlowDNS, Type Auto), NPV Tunnel (DNSTT) |
 
----
-
-## DNS tunnel setup
+## 🌐 DNS tunnel setup
 
 DuckDNS cannot do this. Use your own domain (a cheap `.xyz` works) with DNS on Cloudflare (free) or any DNS host that has **NS** records:
 
@@ -204,9 +250,7 @@ DuckDNS cannot do this. Use your own domain (a cheap `.xyz` works) with DNS on C
 Then set `t.yourdomain.com` in **Settings → DNS** and open **UDP 53**.  
 On Cloudflare keep the cloud **grey (DNS only)**.
 
----
-
-## CDN setup (Cloudflare)
+## 🧡 CDN setup (Cloudflare)
 
 Needs your own domain on Cloudflare:
 
@@ -217,11 +261,9 @@ Needs your own domain on Cloudflare:
 Cloudflare → SSL/TLS → mode **Full**. Then type `cdn.yourdomain.com` in **Settings → CDN**.  
 Keep the panel record and the DNS tunnel records **grey**.
 
----
+## 💻 Terminal menu
 
-## Terminal menu
-
-```
+```bash
 menu
 ```
 
@@ -230,9 +272,7 @@ service restart, SSL certificate (Let's Encrypt or your own), backup and restore
 update AlecsUI, update Xray core and geo files, roll back Xray,
 server check (find problems), performance mode, 443 mode on / off.
 
----
-
-## Tips
+## 💡 Tips
 
 - Point a domain to your VPS (A record, grey cloud on Cloudflare) and get a Let's Encrypt certificate from `menu`.
 - Device limit 2 works best for most people (phone + one more, or Wi-Fi to mobile data).
@@ -241,33 +281,40 @@ server check (find problems), performance mode, 443 mode on / off.
 - Change the panel path in **Settings → General** if anyone else learns it.
 - Something not working? Run **Settings → Server check** (or `menu` → Server check) first.
 
----
+<img src="https://user-images.githubusercontent.com/74038190/212284087-bbe7e430-757e-4901-90bf-4cd2ce3e1852.gif" width="500">
 
-## Made by
+## 👨‍💻 Made by
 
-<p align="center">
-  <b>Alecs</b> (<a href="https://github.com/alecssdeveloper1">@alecssdeveloper1</a>)
-</p>
+<div align="center">
 
-<p align="center"><i>AlecsUI is a renamed fork of <a href="https://github.com/chaliraza777/ReXUI">ReXUI</a> by Ali (<a href="https://github.com/chaliraza777">@chaliraza777</a>), kept under GPL-3.0 with original credit.</i></p>
+### Alecs
+[@alecssdeveloper1](https://github.com/alecssdeveloper1)
+
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=18&duration=3000&pause=800&color=F59E0B&center=true&vCenter=true&width=520&lines=Thanks+for+using+AlecsUI!;Fork+of+ReXUI+%C2%B7+GPL-3.0" />
+
+<br/>
+
+*AlecsUI is a renamed fork of [ReXUI](https://github.com/chaliraza777/ReXUI) by Ali ([@chaliraza777](https://github.com/chaliraza777)), kept under GPL-3.0 with original credit.*
+
+</div>
 
 ### ☕ Donează
 
-[![Wise](https://img.shields.io/badge/Wise-Donează-9FE870?style=for-the-badge&logo=wise&logoColor=black)](https://wise.com/pay/me/alexandrup104)
-[![Revolut](https://img.shields.io/badge/Revolut-Donează-0075EB?style=for-the-badge&logo=revolut&logoColor=white)](https://revolut.me/alecss12)
-
-<br/>
+<p align="center">
+  <a href="https://wise.com/pay/me/alexandrup104"><img src="https://img.shields.io/badge/Wise-Donează-9FE870?style=for-the-badge&logo=wise&logoColor=black" alt="Wise"/></a>
+  <a href="https://revolut.me/alecss12"><img src="https://img.shields.io/badge/Revolut-Donează-0075EB?style=for-the-badge&logo=revolut&logoColor=white" alt="Revolut"/></a>
+</p>
 
 ### 📞 Contact
 
-[![WhatsApp](https://img.shields.io/badge/WhatsApp-+40_732_159_658-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://wa.me/40732159658)
-[![Telegram](https://img.shields.io/badge/Telegram-@alecss12-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/alecss12)
-
-<br/>
+<p align="center">
+  <a href="https://wa.me/40732159658"><img src="https://img.shields.io/badge/WhatsApp-+40_732_159_658-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" alt="WhatsApp"/></a>
+  <a href="https://t.me/alecss12"><img src="https://img.shields.io/badge/Telegram-@alecss12-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram"/></a>
+</p>
 
 ---
 
-## License
+## 📜 License
 
 AlecsUI is free software under the **GNU General Public License v3.0**.  
 You can use, study, share and change it. If you share a changed version, it must stay under GPL-3.0 with its source code public, and keep the credit to the original ReXUI project and this fork.
@@ -276,3 +323,5 @@ You can use, study, share and change it. If you share a changed version, it must
 Based on ReXUI © 2026 Ali ([chaliraza777](https://github.com/chaliraza777))
 
 > Use AlecsUI only where it is legal, and follow your VPS provider's terms.
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,6,20,24&height=140&section=footer" width="100%"/>
