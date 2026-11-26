@@ -47,9 +47,22 @@
 
 # 🇷🇴 Română
 
-## ✨ Noutăți în 1.7
+## ✨ Noutăți în 1.8
 
-![New](https://img.shields.io/badge/NOU-v1.7-14b8a6?style=for-the-badge)
+![New](https://img.shields.io/badge/NOU-v1.8-14b8a6?style=for-the-badge)
+![Stunnel](https://img.shields.io/badge/Stunnel-fix_443-22c55e?style=for-the-badge)
+![OpenVZ](https://img.shields.io/badge/OpenVZ-compatibil-f59e0b?style=for-the-badge)
+
+- Instalator mai inteligent: detectare VPS (OpenVZ/TUN/BBR/WireGuard)
+- Fără conflict pe portul 443 la reinstalare (oprește stunnel-ul vechi controlat)
+- Download Xray/Hysteria cu timeout + mirror-uri
+- Parola panoului e afișată imediat (și salvată în `/etc/tunnel/panel-login.txt`)
+- Protocoale incompatibile sunt sărite, fără a opri restul instalării
+- Branding panou/meniu: **AlecsUI v1.8**
+
+<details>
+<summary><b>🕒 Noutăți în 1.7</b></summary>
+
 ![Inbounds](https://img.shields.io/badge/Inbounds-stil_3X--UI-8b5cf6?style=for-the-badge)
 ![Security](https://img.shields.io/badge/Securitate-Întărită-ef4444?style=for-the-badge)
 
@@ -75,6 +88,7 @@
 - **1.6:** useri WireGuard (chei proprii, QR, .conf), generator payload pe SSH, IP real pentru SSH, adresa CDN păstrată la restore
 - **1.5:** modul 443 (HAProxy) cu self-test și rollback, IP client real în spatele HAProxy, CDN mode, payload builder, Server check cu butoane Fix, pagina Ports, Performance mode, Settings în 6 tab-uri, „No expiry” din Edit
 
+</details>
 </details>
 
 ## 🚀 Instalare
@@ -193,33 +207,25 @@ Dezinstalare, info panou, reset login (oprește și 2FA), schimbare porturi, res
 
 # 🇬🇧 English
 
-## ✨ What's new in 1.7
+## ✨ What's new in 1.8
 
-![New](https://img.shields.io/badge/NEW-v1.7-14b8a6?style=for-the-badge)
-![Inbounds](https://img.shields.io/badge/Inbounds-3X--UI%20style-8b5cf6?style=for-the-badge)
-![Security](https://img.shields.io/badge/Security-Hardened-ef4444?style=for-the-badge)
+![New](https://img.shields.io/badge/NEW-v1.8-14b8a6?style=for-the-badge)
+![Stunnel](https://img.shields.io/badge/Stunnel-fix_443-22c55e?style=for-the-badge)
+![OpenVZ](https://img.shields.io/badge/OpenVZ-friendly-f59e0b?style=for-the-badge)
 
-- **Inbounds page (like 3X-UI):** make your own V2Ray configs. Pick **VLESS or Trojan**, the port, the transport (**TCP, XHTTP, WS, XHTTP CDN, WS CDN**) and the security (**None, TLS or Reality**). Address, Host, Path and SNI are set on the inbound
-- Fresh installs start with **no inbounds**, you make exactly the ones you want
-- Each V2Ray user gets only the inbounds you **attach** to them. A new inbound is never added to old users by itself
-- Inbounds can **share a port** when they fit together, and a used port is shown before you save
-- **WebSocket** for VLESS and Trojan, also through Cloudflare CDN. On 443 mode, WS TLS works on 443 and WS without TLS on 80
-- **Compact tables:** inbounds and users in thin rows with a small on/off switch. Tap a user to see details and edit
-- **Teal** is the new default colour (the others are still in Settings → Appearance)
-- The browser **Back button** now goes back inside the panel
-
-**🔐 Security**
-- Xray now runs as its own user (`alecsui-xray`), other services cannot read its keys or config
-- Xray downloads (installer, menu and panel update) are checked against the official checksum. If the check fails, nothing is changed
-- **Restore** checks every user in the backup file and skips broken ones (it tells you how many)
-- A user is not created if its password could not be set
-- Old failed-login records are cleaned up every minute, so memory stays small
+- Smarter installer: VPS capability checks (OpenVZ / TUN / BBR / WireGuard)
+- No more 443 conflict on reinstall (controlled stop of old stunnel only)
+- Xray/Hysteria downloads with timeouts + mirrors
+- Panel password shown immediately (also saved to `/etc/tunnel/panel-login.txt`)
+- Incompatible protocols are skipped without aborting the whole install
+- Panel/menu branding: **AlecsUI v1.8**
 
 <details>
-<summary><b>🕒 What was new in 1.6 and 1.5</b></summary>
+<summary><b>🕒 What's new in 1.7 / 1.6 / 1.5</b></summary>
 
+- **1.7:** Inbounds page (3X-UI style), attach inbounds per user, WebSocket CDN, compact tables, hardened Xray user + checksums
 - **1.6:** WireGuard users (own keys, QR, .conf), payload generator on SSH users, real IP for SSH users, CDN address kept on restore
-- **1.5:** 443 mode (HAProxy) with self test and rollback, real client IP behind HAProxy, CDN mode, payload builder, server check with Fix buttons, Ports page, Performance mode, Settings in 6 tabs, "No expiry" from Edit
+- **1.5:** 443 mode (HAProxy) with self test and rollback, CDN mode, payload builder, server check, Ports page, Performance mode
 
 </details>
 
