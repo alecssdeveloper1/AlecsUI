@@ -1,5 +1,5 @@
 #!/bin/bash
-# AlecsUI v1.9.4 installer
+# AlecsUI v1.9.5 installer
 # Self-hosted SSH + Xray panel: SSH, SSL, SSH WebSocket (+TLS), UDPGW, Xray (VLESS XHTTP TLS / TCP TLS / Reality / XHTTP, Trojan), OpenVPN (TCP + HTTP proxy), Hysteria2 (UDP), WireGuard, DNS tunnel (dnstt) + V2Ray,
 # web panel with users, subscriptions, data and device limits, Telegram alerts, backups, 2FA, and a terminal menu.
 # Run as root on Ubuntu or Debian:  bash install.sh   (running it again updates AlecsUI and keeps users and settings)
@@ -9,7 +9,7 @@ set -e
 trap 'spin_stop 0 "Failed" "Eșec" 2>/dev/null || true; echo -e "\n\033[1;31mERROR / EROARE: line $LINENO\033[0m"' ERR
 [ "${EUID:-$(id -u)}" -ne 0 ] && { echo "Please run as root"; exit 1; }
 
-ALECSUI_VER=1.9.4
+ALECSUI_VER=1.9.5
 SSH_PORT_DEF=22
 SSL_PORT=443; WS_PORT=8880; WSTLS_PORT=2083; UDPGW_PORT=7300; VWSTLS_PORT=8443; VTCP_PORT=2053; VWS_PORT=8080; REALITY_PORT=8444; TROJAN_PORT=2096; OVPN1_PORT=1194; OVPN2_PORT=110; SQUID_PORT=3128; HY_PORT=443; HY_HOP=20000-30000; WG_PORT=51820; HYV=2.13.0; DNSTTV=v1.20240513.0
 # BadVPN tag 1.999.130 resolved commit (pinned; clone must match)
@@ -30,6 +30,7 @@ OUR_BINS='stunnel|xray|openvpn|squid|haproxy|hysteria|dnstt-server|badvpn-udpgw'
 
 
 # ---------- Installer UI (bilingual RO/EN + colors + progress) ----------
+# ASCII-only glyphs: Termius/SSH often break UTF-8 block/braille (shows as ???)
 C0='\033[0m'; CB='\033[1m'; CD='\033[2m'
 CR='\033[1;31m'; CG='\033[1;32m'; CY='\033[1;33m'; CC='\033[1;36m'; CM='\033[1;35m'; CW='\033[1;37m'
 CL='\033[1;94m'; CT='\033[1;96m'
@@ -45,8 +46,8 @@ ui_pick_lang(){
   if [ -t 0 ] && [ -t 1 ]; then
     echo
     echo -e "  ${CT}${CB}AlecsUI installer / Instalator${C0}"
-    echo -e "  ${CD}1) English   2) Română${C0}"
-    read -rp "  Language / Limbă [1/2] (default: $UI_LANG): " _ans || true
+    echo -e "  ${CD}1) English   2) Romana${C0}"
+    read -rp "  Language / Limba [1/2] (default: $UI_LANG): " _ans || true
     case "${_ans:-}" in
       2|ro|RO|r|R) UI_LANG=ro;;
       1|en|EN|e|E) UI_LANG=en;;
@@ -55,7 +56,7 @@ ui_pick_lang(){
   export UI_LANG
 }
 
-# msg "english" "română"
+# msg "english" "romana"
 msg(){
   if [ "${UI_LANG:-en}" = ro ]; then echo -e "$2"; else echo -e "$1"; fi
 }
@@ -64,23 +65,22 @@ ui_banner(){
   clear 2>/dev/null || true
   echo -e "${CT}"
   cat <<'BAN'
-     █████╗ ██╗     ███████╗ ██████╗███████╗██╗   ██╗██╗
-    ██╔══██╗██║     ██╔════╝██╔════╝██╔════╝██║   ██║██║
-    ███████║██║     █████╗  ██║     ███████╗██║   ██║██║
-    ██╔══██║██║     ██╔══╝  ██║     ╚════██║██║   ██║██║
-    ██║  ██║███████╗███████╗╚██████╗███████║╚██████╔╝██║
-    ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝╚══════╝ ╚═════╝ ╚═╝
+      _    _               _   _ ___
+     / \  | | ___  ___ ___| | | |_ _|
+    / _ \ | |/ _ \/ __/ __| | | || |
+   / ___ \| |  __/ (_| (__| |_| || |
+  /_/   \_\_|\___|\___\___|\___/|___|
 BAN
   echo -e "${C0}"
-  echo -e "  ${CM}${CB}v${ALECSUI_VER}${C0}  ${CD}· Open Source VPN Panel · GPL-3.0${C0}"
+  echo -e "  ${CM}${CB}v${ALECSUI_VER}${C0}  ${CD}| Open Source VPN Panel | GPL-3.0${C0}"
   echo -e "  ${CD}github.com/alecssdeveloper1/AlecsUI${C0}"
   echo
   if [ "${UI_LANG}" = ro ]; then
-    echo -e "  ${CG}▶${C0} Instalare animată · mesaje RO/EN · Ubuntu 20–26 / Debian 11+"
+    echo -e "  ${CG}>${C0} Instalare animata | mesaje RO/EN | Ubuntu 20-26 / Debian 11+"
   else
-    echo -e "  ${CG}▶${C0} Animated install · RO/EN messages · Ubuntu 20–26 / Debian 11+"
+    echo -e "  ${CG}>${C0} Animated install | RO/EN messages | Ubuntu 20-26 / Debian 11+"
   fi
-  echo -e "  ${CD}──────────────────────────────────────────────────${C0}"
+  echo -e "  ${CD}--------------------------------------------------${C0}"
   echo
 }
 
@@ -94,23 +94,23 @@ os_check(){
   case "$id" in
     ubuntu)
       if [ "$major" -ge 20 ] && [ "$major" -le 26 ] 2>/dev/null; then
-        msg "${CG}✓ Ubuntu $ver supported (20–26).${C0}" "${CG}✓ Ubuntu $ver suportat (20–26).${C0}"
+        msg "${CG}[OK] Ubuntu $ver supported (20-26).${C0}" "${CG}[OK] Ubuntu $ver suportat (20-26).${C0}"
       else
-        msg "${CY}! Ubuntu $ver is outside the tested range 20–26. Continuing anyway…${C0}" \
-            "${CY}! Ubuntu $ver e în afara intervalului testat 20–26. Continuăm…${C0}"
+        msg "${CY}[!] Ubuntu $ver is outside the tested range 20-26. Continuing...${C0}" \
+            "${CY}[!] Ubuntu $ver e in afara intervalului testat 20-26. Continuam...${C0}"
       fi
       ;;
     debian)
       if [ "$major" -ge 11 ] 2>/dev/null; then
-        msg "${CG}✓ Debian $ver supported (11+).${C0}" "${CG}✓ Debian $ver suportat (11+).${C0}"
+        msg "${CG}[OK] Debian $ver supported (11+).${C0}" "${CG}[OK] Debian $ver suportat (11+).${C0}"
       else
-        msg "${CR}✗ Debian $ver is too old. Need Debian 11+.${C0}" "${CR}✗ Debian $ver e prea vechi. Trebuie Debian 11+.${C0}"
+        msg "${CR}[X] Debian $ver is too old. Need Debian 11+.${C0}" "${CR}[X] Debian $ver e prea vechi. Trebuie Debian 11+.${C0}"
         exit 1
       fi
       ;;
     *)
-      msg "${CY}! Distro '$id' is not officially listed. Ubuntu/Debian recommended.${C0}" \
-          "${CY}! Distro '$id' nu e pe lista oficială. Recomandat Ubuntu/Debian.${C0}"
+      msg "${CY}[!] Distro '$id' is not officially listed. Ubuntu/Debian recommended.${C0}" \
+          "${CY}[!] Distro '$id' nu e pe lista oficiala. Recomandat Ubuntu/Debian.${C0}"
       ;;
   esac
 }
@@ -119,10 +119,11 @@ spin_start(){
   local tip="$1"
   [ -t 1 ] || { echo -e "  ${CD}$tip${C0}"; return; }
   (
-    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i=0
+    # ASCII spinner — UTF-8 braille becomes "?" in many SSH clients (Termius)
+    local frames='|/-\' i=0
     while true; do
-      printf "\r  ${CT}%s${C0} ${CW}%s${C0}   " "${frames:i++%10:1}" "$tip"
-      sleep 0.08
+      printf "\r  ${CT}%s${C0} ${CW}%s${C0}   " "${frames:i++%4:1}" "$tip"
+      sleep 0.1
     done
   ) &
   SPIN_PID=$!
@@ -138,22 +139,24 @@ spin_stop(){
   SPIN_PID=''
   [ -t 1 ] && printf "\r\033[K"
   if [ "$ok" = 1 ]; then
-    msg "  ${CG}✓${C0} ${CB}$done_en${C0}" "  ${CG}✓${C0} ${CB}$done_ro${C0}"
+    msg "  ${CG}[OK]${C0} ${CB}$done_en${C0}" "  ${CG}[OK]${C0} ${CB}$done_ro${C0}"
   else
-    msg "  ${CY}!${C0} ${CB}$done_en${C0}" "  ${CY}!${C0} ${CB}$done_ro${C0}"
+    msg "  ${CY}[!]${C0} ${CB}$done_en${C0}" "  ${CY}[!]${C0} ${CB}$done_ro${C0}"
   fi
 }
 
-# Progress bar for step n/total
+# Progress bar for step n/total (ASCII only — tr+UTF-8 block chars break on Termius)
 ui_bar(){
   local n="$1" total="${2:-11}" width=28
   local filled=$(( n * width / total )) empty=$(( width - filled ))
-  local bar
-  bar=$(printf "%${filled}s" | tr ' ' '█')$(printf "%${empty}s" | tr ' ' '░')
+  local bar i
+  bar=''
+  i=0; while [ "$i" -lt "$filled" ]; do bar="${bar}#"; i=$((i+1)); done
+  i=0; while [ "$i" -lt "$empty" ]; do bar="${bar}-"; i=$((i+1)); done
   printf "  ${CM}[%s]${C0} ${CD}%d/%d${C0}\n" "$bar" "$n" "$total"
 }
 
-# step N "English title" "Titlu română"
+# step N "English title" "Titlu romana"
 step(){
   local n="$1" en="$2" ro="${3:-$2}"
   echo
@@ -163,26 +166,26 @@ step(){
   else
     echo -e "  ${CT}${CB}Step $n/11${C0}  ${CW}$en${C0}"
   fi
-  echo -e "  ${CD}········································${C0}"
+  echo -e "  ${CD}........................................${C0}"
 }
 
 say(){ msg "  $1" "  $2"; }
-ok(){ msg "  ${CG}✓${C0} $1" "  ${CG}✓${C0} $2"; }
-warn(){ msg "  ${CY}!${C0} $1" "  ${CY}!${C0} $2"; }
-errx(){ msg "  ${CR}✗${C0} $1" "  ${CR}✗${C0} $2"; }
+ok(){ msg "  ${CG}[OK]${C0} $1" "  ${CG}[OK]${C0} $2"; }
+warn(){ msg "  ${CY}[!]${C0} $1" "  ${CY}[!]${C0} $2"; }
+errx(){ msg "  ${CR}[X]${C0} $1" "  ${CR}[X]${C0} $2"; }
 
 ui_finish(){
   local ph="$1" r="$2"
   echo
   echo -e "${CG}"
   cat <<'OK'
-   ╔══════════════════════════════════════════╗
-   ║          ★  INSTALL COMPLETE  ★          ║
-   ║          ★  INSTALARE COMPLETĂ  ★        ║
-   ╚══════════════════════════════════════════╝
+   +==========================================+
+   |          *  INSTALL COMPLETE  *          |
+   |          *  INSTALARE COMPLETA  *        |
+   +==========================================+
 OK
   echo -e "${C0}"
-  msg "${CB}AlecsUI v${ALECSUI_VER} — service status${C0}" "${CB}AlecsUI v${ALECSUI_VER} — starea serviciilor${C0}"
+  msg "${CB}AlecsUI v${ALECSUI_VER} -- service status${C0}" "${CB}AlecsUI v${ALECSUI_VER} -- starea serviciilor${C0}"
 }
 
 
@@ -4911,9 +4914,9 @@ a.btn{text-decoration:none;color:var(--t)}a.btn.pri{color:#fff}
 <label for="lp">Password</label><div class="fi"><span data-i="lock"></span><input id="lp" type="password" autocomplete="current-password"><button type="button" class="ib" id="lpe" aria-label="Show password"></button></div>
 <div id="lcw" hidden><label for="lc">6-digit code from your authenticator app</label><div class="fi"><span data-i="shield"></span><input id="lc" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div></div>
 <div id="capw" hidden><label for="lcap">Type the letters from the picture</label><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><img id="capi" alt="Security check picture" width="200" height="64" style="border-radius:8px;max-width:100%"><button type="button" class="ib" id="capr" aria-label="Show a new picture"></button></div><div class="fi"><span data-i="shield"></span><input id="lcap" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="8"></div></div>
-<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.4</p></form></div>
-<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.4</a></aside>
-<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.4</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.4</a></main><nav id="bn" aria-label="Main"></nav></div>
+<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.5</p></form></div>
+<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.5</a></aside>
+<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.5</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.5</a></main><nav id="bn" aria-label="Main"></nav></div>
 <div id="dt" hidden><div class="dts"><div class="dth"><b>User details</b><button class="btn sm" id="dx" aria-label="Close">Close</button></div><div id="dtb"></div></div></div>
 <div id="md" hidden><form class="card" id="mf"></form></div>
 <div id="sxo" hidden><div class="sxp" role="dialog" aria-label="Search"><div class="fi"><span data-i="search"></span><input id="sxi" placeholder="Search users, settings, tools..." autocomplete="off" spellcheck="false" aria-label="Search"><button type="button" class="btn sm" id="sxx">Esc</button></div><div id="sxr" role="listbox"></div></div></div>
@@ -5189,7 +5192,7 @@ ${usageCard(u.hist)}
 ${onlineCard(u)}
 ${hx||u.kind=='hy2'?'':`<div class="card"><div class="lab">User page</div><p class="note">Send this link to the user. ${u.kind=='dns'?'It shows their usage, expiry and the DNS tunnel details.':u.kind=='wg'?'It shows their usage, expiry, the WireGuard QR and the .conf file.':u.kind=='ovpn'?'It shows their usage, expiry and the OpenVPN file download.':'It shows their usage, expiry, SSH details and payloads.'}</p>${cbox('User page',u.sub,false)}<a class="btn sm" href="${X(u.sub)}" target="_blank" rel="noopener" style="margin-top:10px;text-decoration:none">Open user page</a></div>`}
 ${hx?`<div class="card"><div class="ct"><div class="lab">Subscription link</div><button class="btn sm" data-ua="newsub">${I('refresh',14)}New link</button></div><p class="note">Import into v2rayNG, NekoBox or Hiddify. It contains this user's V2Ray configs (the inbounds they have) and shows usage and expiry.</p>${cbox('Subscription',u.sub)}<a class="btn sm" href="${X(u.sub)}" target="_blank" rel="noopener" style="margin-top:10px;text-decoration:none">Open user page</a></div>
-<div class="card"><div class="ct"><div class="lab">Xray configs</div><button class="btn sm" data-ua="newuuid">${I('refresh',14)}New UUID</button></div><p class="note">Tap a config to copy it. XHTTP needs a recent app (v2rayNG 1.9.40+, Hiddify, NekoBox with Xray core).</p>${u.links.map(l=>cbox(l.name+(l.alt?' · port '+(l.url.match(/:(\d+)\?/)||[])[1]+' (or '+l.alt+')':''),l.url)+(l.name=='VLESS XHTTP (no TLS)'&&!u.plaindomain?'<p class="note bad" style="margin-top:6px">New Xray apps refuse VLESS without TLS on an IP address. Set a domain (Settings → Server address, or a domain certificate) to use this config.</p>':'')).join('')}</div>
+<div class="card"><div class="ct"><div class="lab">Xray configs</div><button class="btn sm" data-ua="newuuid">${I('refresh',14)}New UUID</button></div><p class="note">Tap a config to copy it. XHTTP needs a recent app (v2rayNG 1.9.50+, Hiddify, NekoBox with Xray core).</p>${u.links.map(l=>cbox(l.name+(l.alt?' · port '+(l.url.match(/:(\d+)\?/)||[])[1]+' (or '+l.alt+')':''),l.url)+(l.name=='VLESS XHTTP (no TLS)'&&!u.plaindomain?'<p class="note bad" style="margin-top:6px">New Xray apps refuse VLESS without TLS on an IP address. Set a domain (Settings → Server address, or a domain certificate) to use this config.</p>':'')).join('')}</div>
 `:''}
 ${hs?`<div class="card"><div class="ct"><div class="lab">SSH account</div><button class="btn sm" data-cp="${cp(sshAll)}">Copy all</button></div>
 ${row('Host',u.addr)}${row('Username',u.name)}${row('Password',u.pw||'Unknown (set a new one with Edit)')}${row('SSH',p.SSH_PORT)}${row('SSH SSL / TLS',AP(u,'SSL_PORT'))}${row('SSH WS',AP(u,'WS_PORT'))}${row('SSH WS TLS',AP(u,'WSTLS_PORT'))}${row('UDPGW','127.0.0.1:'+p.UDPGW_PORT)}</div>
@@ -5941,7 +5944,7 @@ Restart=on-failure
 RestartSec=3
 TimeoutStartSec=60
 LimitNOFILE=65535
-# v1.9.4: panel still root (compat). Helper socket is the allowlisted privileged path.
+# v1.9.5: panel still root (compat). Helper socket is the allowlisted privileged path.
 # Full User= drop planned after VM soak tests.
 NoNewPrivileges=false
 ProtectHome=read-only
@@ -6110,7 +6113,7 @@ CF=/etc/tunnel/config; LIB=/usr/local/lib/tunnel; PY=/opt/tunnel-panel/panel.py
 # Prefer versioned GitHub Releases. main is only a fallback when ALECSUI_ALLOW_MAIN=1.
 UPDATE_URL="${ALECSUI_UPDATE_URL:-https://api.github.com/repos/alecssdeveloper1/AlecsUI/releases/latest}"
 UPDATE_RAW_MAIN="https://raw.githubusercontent.com/alecssdeveloper1/AlecsUI/main/install.sh"
-ALECSUI_VER_INSTALLED="1.9.4"
+ALECSUI_VER_INSTALLED="1.9.5"
 G='\033[1;32m'; Y='\033[1;33m'; C='\033[1;36m'; N='\033[0m'
 . $CF
 myip(){ curl -4 -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}'; }
@@ -6407,7 +6410,7 @@ uninst(){
 while true; do
   cat <<T
 
-===== AlecsUI v1.9.4 MENU =====
+===== AlecsUI v1.9.5 MENU =====
    github.com/alecssdeveloper1/AlecsUI
 1) Uninstall
 2) Panel info

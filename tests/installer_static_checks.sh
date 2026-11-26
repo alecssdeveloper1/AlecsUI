@@ -8,7 +8,7 @@ echo "== bash -n install.sh =="
 bash -n install.sh
 
 echo "== required markers =="
-grep -q 'ALECSUI_VER=1.9.4' install.sh
+grep -q 'ALECSUI_VER=1.9.5' install.sh
 grep -q 'ui_banner' install.sh
 grep -q 'ui_pick_lang' install.sh
 grep -q 'os_check' install.sh

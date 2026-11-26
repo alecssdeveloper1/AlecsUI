@@ -4,6 +4,11 @@ All notable changes to AlecsUI are documented here. Format based on [Keep a Chan
 
 AlecsUI is a **modified** fork of ReXUI (Ali / chaliraza777), GPL-3.0.
 
+## [1.9.5] — 2026-11-26
+
+### Fixed
+- Installer UI: ASCII-only progress bar/spinner/banner (Termius showed `?` for UTF-8 block/braille; `tr`+multi-byte was broken)
+
 ## [1.9.4] — 2026-11-26
 
 ### Fixed
