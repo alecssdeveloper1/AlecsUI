@@ -63,7 +63,7 @@
 - Butonul **Back** din browser navighează înapoi în panou
 
 **🔐 Securitate**
-- Xray rulează ca user separat (`alecsu-xray`), celelalte servicii nu îi pot citi cheile sau configul
+- Xray rulează ca user separat (`alecsui-xray`), celelalte servicii nu îi pot citi cheile sau configul
 - Download-urile Xray (installer, meniu, update panou) sunt verificate cu checksum oficial. Dacă verificarea eșuează, nu se schimbă nimic
 - **Restore** verifică fiecare user din backup și sare peste cei corupți (îți spune câți)
 - Un user nu e creat dacă parola nu a putut fi setată
@@ -209,7 +209,7 @@ Dezinstalare, info panou, reset login (oprește și 2FA), schimbare porturi, res
 - The browser **Back button** now goes back inside the panel
 
 **🔐 Security**
-- Xray now runs as its own user (`alecsu-xray`), other services cannot read its keys or config
+- Xray now runs as its own user (`alecsui-xray`), other services cannot read its keys or config
 - Xray downloads (installer, menu and panel update) are checked against the official checksum. If the check fails, nothing is changed
 - **Restore** checks every user in the backup file and skips broken ones (it tells you how many)
 - A user is not created if its password could not be set
