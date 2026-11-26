@@ -1,5 +1,5 @@
 #!/bin/bash
-# AlecsUI v1.9.5 installer
+# AlecsUI v1.9.6 installer
 # Self-hosted SSH + Xray panel: SSH, SSL, SSH WebSocket (+TLS), UDPGW, Xray (VLESS XHTTP TLS / TCP TLS / Reality / XHTTP, Trojan), OpenVPN (TCP + HTTP proxy), Hysteria2 (UDP), WireGuard, DNS tunnel (dnstt) + V2Ray,
 # web panel with users, subscriptions, data and device limits, Telegram alerts, backups, 2FA, and a terminal menu.
 # Run as root on Ubuntu or Debian:  bash install.sh   (running it again updates AlecsUI and keeps users and settings)
@@ -9,7 +9,7 @@ set -e
 trap 'spin_stop 0 "Failed" "Eșec" 2>/dev/null || true; echo -e "\n\033[1;31mERROR / EROARE: line $LINENO\033[0m"' ERR
 [ "${EUID:-$(id -u)}" -ne 0 ] && { echo "Please run as root"; exit 1; }
 
-ALECSUI_VER=1.9.5
+ALECSUI_VER=1.9.6
 SSH_PORT_DEF=22
 SSL_PORT=443; WS_PORT=8880; WSTLS_PORT=2083; UDPGW_PORT=7300; VWSTLS_PORT=8443; VTCP_PORT=2053; VWS_PORT=8080; REALITY_PORT=8444; TROJAN_PORT=2096; OVPN1_PORT=1194; OVPN2_PORT=110; SQUID_PORT=3128; HY_PORT=443; HY_HOP=20000-30000; WG_PORT=51820; HYV=2.13.0; DNSTTV=v1.20240513.0
 # BadVPN tag 1.999.130 resolved commit (pinned; clone must match)
@@ -4914,9 +4914,9 @@ a.btn{text-decoration:none;color:var(--t)}a.btn.pri{color:#fff}
 <label for="lp">Password</label><div class="fi"><span data-i="lock"></span><input id="lp" type="password" autocomplete="current-password"><button type="button" class="ib" id="lpe" aria-label="Show password"></button></div>
 <div id="lcw" hidden><label for="lc">6-digit code from your authenticator app</label><div class="fi"><span data-i="shield"></span><input id="lc" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div></div>
 <div id="capw" hidden><label for="lcap">Type the letters from the picture</label><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><img id="capi" alt="Security check picture" width="200" height="64" style="border-radius:8px;max-width:100%"><button type="button" class="ib" id="capr" aria-label="Show a new picture"></button></div><div class="fi"><span data-i="shield"></span><input id="lcap" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="8"></div></div>
-<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.5</p></form></div>
-<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.5</a></aside>
-<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.5</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.5</a></main><nav id="bn" aria-label="Main"></nav></div>
+<div class="err" id="le" role="alert"></div><button class="btn pri lbtn">Log in</button><p class="lft">Protected panel · AlecsUI v1.9.6</p></form></div>
+<div id="app" hidden><aside><div class="brand"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search" title="Search (/)" style="margin-left:auto"></button><button class="ib thb" id="th" aria-label="Switch theme"></button></div><nav id="nav"></nav><a class="pwr" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by <b>AlecsUI</b> v1.9.6</a></aside>
+<main><div id="mt"><b class="logo blogo" aria-label="AlecsUI"><span>Alecs</span><i>UI</i></b><button class="ib sxb" aria-label="Search"></button><button class="ib thb" aria-label="Switch theme"></button><button class="ib" id="lo2" aria-label="Log out"></button></div><div id="cbn"></div><div class="hdr"><span class="chip" id="xs"></span><span class="ver">AlecsUI v1.9.6</span><small class="m" id="upd" style="margin-left:auto"></small></div><div id="pg"></div><a class="pwm" href="https://github.com/alecssdeveloper1/AlecsUI" target="_blank" rel="noopener">Powered by AlecsUI v1.9.6</a></main><nav id="bn" aria-label="Main"></nav></div>
 <div id="dt" hidden><div class="dts"><div class="dth"><b>User details</b><button class="btn sm" id="dx" aria-label="Close">Close</button></div><div id="dtb"></div></div></div>
 <div id="md" hidden><form class="card" id="mf"></form></div>
 <div id="sxo" hidden><div class="sxp" role="dialog" aria-label="Search"><div class="fi"><span data-i="search"></span><input id="sxi" placeholder="Search users, settings, tools..." autocomplete="off" spellcheck="false" aria-label="Search"><button type="button" class="btn sm" id="sxx">Esc</button></div><div id="sxr" role="listbox"></div></div></div>
@@ -5192,7 +5192,7 @@ ${usageCard(u.hist)}
 ${onlineCard(u)}
 ${hx||u.kind=='hy2'?'':`<div class="card"><div class="lab">User page</div><p class="note">Send this link to the user. ${u.kind=='dns'?'It shows their usage, expiry and the DNS tunnel details.':u.kind=='wg'?'It shows their usage, expiry, the WireGuard QR and the .conf file.':u.kind=='ovpn'?'It shows their usage, expiry and the OpenVPN file download.':'It shows their usage, expiry, SSH details and payloads.'}</p>${cbox('User page',u.sub,false)}<a class="btn sm" href="${X(u.sub)}" target="_blank" rel="noopener" style="margin-top:10px;text-decoration:none">Open user page</a></div>`}
 ${hx?`<div class="card"><div class="ct"><div class="lab">Subscription link</div><button class="btn sm" data-ua="newsub">${I('refresh',14)}New link</button></div><p class="note">Import into v2rayNG, NekoBox or Hiddify. It contains this user's V2Ray configs (the inbounds they have) and shows usage and expiry.</p>${cbox('Subscription',u.sub)}<a class="btn sm" href="${X(u.sub)}" target="_blank" rel="noopener" style="margin-top:10px;text-decoration:none">Open user page</a></div>
-<div class="card"><div class="ct"><div class="lab">Xray configs</div><button class="btn sm" data-ua="newuuid">${I('refresh',14)}New UUID</button></div><p class="note">Tap a config to copy it. XHTTP needs a recent app (v2rayNG 1.9.50+, Hiddify, NekoBox with Xray core).</p>${u.links.map(l=>cbox(l.name+(l.alt?' · port '+(l.url.match(/:(\d+)\?/)||[])[1]+' (or '+l.alt+')':''),l.url)+(l.name=='VLESS XHTTP (no TLS)'&&!u.plaindomain?'<p class="note bad" style="margin-top:6px">New Xray apps refuse VLESS without TLS on an IP address. Set a domain (Settings → Server address, or a domain certificate) to use this config.</p>':'')).join('')}</div>
+<div class="card"><div class="ct"><div class="lab">Xray configs</div><button class="btn sm" data-ua="newuuid">${I('refresh',14)}New UUID</button></div><p class="note">Tap a config to copy it. XHTTP needs a recent app (v2rayNG 1.9.60+, Hiddify, NekoBox with Xray core).</p>${u.links.map(l=>cbox(l.name+(l.alt?' · port '+(l.url.match(/:(\d+)\?/)||[])[1]+' (or '+l.alt+')':''),l.url)+(l.name=='VLESS XHTTP (no TLS)'&&!u.plaindomain?'<p class="note bad" style="margin-top:6px">New Xray apps refuse VLESS without TLS on an IP address. Set a domain (Settings → Server address, or a domain certificate) to use this config.</p>':'')).join('')}</div>
 `:''}
 ${hs?`<div class="card"><div class="ct"><div class="lab">SSH account</div><button class="btn sm" data-cp="${cp(sshAll)}">Copy all</button></div>
 ${row('Host',u.addr)}${row('Username',u.name)}${row('Password',u.pw||'Unknown (set a new one with Edit)')}${row('SSH',p.SSH_PORT)}${row('SSH SSL / TLS',AP(u,'SSL_PORT'))}${row('SSH WS',AP(u,'WS_PORT'))}${row('SSH WS TLS',AP(u,'WSTLS_PORT'))}${row('UDPGW','127.0.0.1:'+p.UDPGW_PORT)}</div>
@@ -5944,7 +5944,7 @@ Restart=on-failure
 RestartSec=3
 TimeoutStartSec=60
 LimitNOFILE=65535
-# v1.9.5: panel still root (compat). Helper socket is the allowlisted privileged path.
+# v1.9.6: panel still root (compat). Helper socket is the allowlisted privileged path.
 # Full User= drop planned after VM soak tests.
 NoNewPrivileges=false
 ProtectHome=read-only
@@ -6022,25 +6022,83 @@ cat > $LIB/cert.sh <<'CERTM'
 #!/bin/bash
 [ "$EUID" -ne 0 ] && { echo "Please run as root"; exit 1; }
 C=/etc/tunnel/cert; LIB=/usr/local/lib/tunnel; A=/root/.acme.sh/acme.sh; ACME_VER=3.1.0
+ACF=/root/.acme.sh/account.conf
 mkdir -p $C
 myip(){ curl -4 -s --max-time 5 ifconfig.me; }
-free80(){ if ss -tlnp | grep -q ':80 '; then echo "Port 80 is in use:"; ss -tlnp | grep ':80 '; return 1; fi; }
+free80(){ if ss -tlnp | grep -q ':80 '; then echo "Port 80 is in use:" >&2; ss -tlnp | grep ':80 ' >&2; return 1; fi; }
+# Let's Encrypt rejects admin@localhost / any address without a real domain (needs a dot)
+valid_email(){ [[ "$1" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; }
+current_email(){
+  local e=""
+  [ -f "$ACF" ] || { echo ""; return; }
+  e=$(grep -E '^ACCOUNT_EMAIL=' "$ACF" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" | tr -d '\r')
+  echo "$e"
+}
+ask_email(){
+  local def="$1" em
+  read -rp "Email for Let's Encrypt [$def]: " em
+  em=${em:-$def}
+  em=${em,,}
+  if ! valid_email "$em"; then
+    echo "Invalid email. Let's Encrypt needs a real domain (not @localhost)." >&2
+    return 1
+  fi
+  printf '%s\n' "$em"
+}
+ensure_account(){
+  local mail="$1" cur
+  cur=$(current_email)
+  if ! valid_email "$cur"; then
+    echo "Fixing ACME account email (was '${cur:-empty}' — Let's Encrypt rejects it)..."
+    mkdir -p /root/.acme.sh
+    if [ -f "$ACF" ]; then
+      sed -i "s/^ACCOUNT_EMAIL=.*/ACCOUNT_EMAIL='$mail'/" "$ACF" 2>/dev/null || true
+      grep -q '^ACCOUNT_EMAIL=' "$ACF" 2>/dev/null || echo "ACCOUNT_EMAIL='$mail'" >> "$ACF"
+    else
+      echo "ACCOUNT_EMAIL='$mail'" > "$ACF"
+    fi
+    $A --register-account -m "$mail" --server letsencrypt || {
+      echo "Account registration failed for $mail"
+      return 1
+    }
+  elif [ "$cur" != "$mail" ]; then
+    $A --update-account -m "$mail" --server letsencrypt >/dev/null 2>&1 || \
+      $A --register-account -m "$mail" --server letsencrypt >/dev/null 2>&1 || true
+  fi
+  return 0
+}
 need(){
+  local mail="${1:-}"
+  ACME_VER=${ACME_VER:-3.1.0}
   if [ ! -x $A ]; then
-    local TD Z SUM URL
-    TD=$(mktemp -d); URL="https://github.com/acmesh-official/acme.sh/archive/refs/tags/$ACME_VER.tar.gz"
-    # ACME_VER may be unset in menu subshell — default
-    ACME_VER=${ACME_VER:-3.1.0}
+    local TD URL
+    TD=$(mktemp -d)
     URL="https://github.com/acmesh-official/acme.sh/archive/refs/tags/${ACME_VER}.tar.gz"
     echo "Installing acme.sh ${ACME_VER} from GitHub (no curl|sh)..."
     if curl -fsSL --max-time 120 -o "$TD/acme.tgz" "$URL"; then
       tar -C "$TD" -xzf "$TD/acme.tgz"
-      ( cd "$TD/acme.sh-${ACME_VER}" && bash acme.sh --install -m admin@localhost --nocron >/dev/null 2>&1 ) || true
+      # Never use admin@localhost — LE returns invalidContact
+      if valid_email "$mail"; then
+        ( cd "$TD/acme.sh-${ACME_VER}" && bash acme.sh --install -m "$mail" --nocron >/dev/null 2>&1 ) || true
+      else
+        ( cd "$TD/acme.sh-${ACME_VER}" && bash acme.sh --install --nocron >/dev/null 2>&1 ) || true
+      fi
     fi
     rm -rf "$TD"
   fi
   [ -x $A ] || { echo "acme.sh could not be installed (check internet)"; return 1; }
   $A --set-default-ca --server letsencrypt >/dev/null 2>&1
+  if valid_email "$mail"; then ensure_account "$mail" || return 1; fi
+}
+acme_mode(){
+  # 443 mode / fake site / HAProxy already hold :80 — use webroot (panel serves challenges)
+  if [ -f /etc/tunnel/fsite.on ] || [ -f /etc/tunnel/h443.on ] || ss -tlnp 2>/dev/null | grep -qE ':80\b.*haproxy'; then
+    mkdir -p /etc/tunnel/acme-www/.well-known/acme-challenge
+    echo "--webroot /etc/tunnel/acme-www"
+    return 0
+  fi
+  free80 || return 1
+  echo "--standalone --httpport 80"
 }
 status(){
   [ -f $C/xray.crt ] || { echo "No certificate yet"; return; }
@@ -6049,6 +6107,7 @@ status(){
   echo; echo "Source : $SOURCE ($NAME)"
   echo "Expiry : $e ($(( ($(date -d "$e" +%s)-$(date +%s))/3600 )) hours left)"
   echo "Files  : $C/xray.crt , $C/xray.key"
+  echo "ACME email : $(current_email)"
 }
 inst(){
   $A --installcert -d "$1" --ecc --key-file $C/xray.key --fullchain-file $C/xray.crt --reloadcmd "$LIB/cert-deploy.sh" || { echo "Certificate install failed"; return 1; }
@@ -6056,14 +6115,24 @@ inst(){
   echo "Done: $2 certificate installed"; status
 }
 domcert(){
+  local dm mail MODE err
   read -rp "Domain: " dm; dm=${dm,,}
   [[ $dm =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || { echo "Invalid domain"; return; }
   IP=$(myip); DI=$(getent ahostsv4 "$dm" | awk '{print $1; exit}')
-  [ "$DI" = "$IP" ] || { echo "Domain points to '$DI' but this server is '$IP'. Fix the A record (Cloudflare: DNS only)"; return; }
-  need || return
-  if [ -f /etc/tunnel/fsite.on ]; then MODE="--webroot /etc/tunnel/acme-www"; mkdir -p /etc/tunnel/acme-www; else free80 || return; MODE="--standalone --httpport 80"; fi
-  $A --issue -d "$dm" $MODE --server letsencrypt --keylength ec-256 --force \
-    || { echo "Failed. Is port 80 allowed in your provider firewall?"; return; }
+  [ "$DI" = "$IP" ] || { echo "Domain points to '$DI' but this server is '$IP'. Fix the A record (Cloudflare: DNS only / grey cloud)"; return; }
+  mail=$(ask_email "ssl@$dm") || return
+  need "$mail" || return
+  ensure_account "$mail" || return
+  MODE=$(acme_mode) || return
+  echo "Issuing cert for $dm (email $mail, mode $MODE)..."
+  err=$($A --issue -d "$dm" $MODE --server letsencrypt --keylength ec-256 --force --accountemail "$mail" 2>&1) || {
+    echo "Failed."
+    echo "$err" | tail -12
+    echo "$err" | grep -qi invalidContact && echo "Hint: ACME email was invalid. Re-run and use a real email (e.g. you@$dm)."
+    echo "Also check: A record (DNS only), TCP 80 open at provider, and Cloudflare grey cloud."
+    return 1
+  }
+  echo "$err" | tail -5
   inst "$dm" domain
 }
 own(){
@@ -6113,7 +6182,7 @@ CF=/etc/tunnel/config; LIB=/usr/local/lib/tunnel; PY=/opt/tunnel-panel/panel.py
 # Prefer versioned GitHub Releases. main is only a fallback when ALECSUI_ALLOW_MAIN=1.
 UPDATE_URL="${ALECSUI_UPDATE_URL:-https://api.github.com/repos/alecssdeveloper1/AlecsUI/releases/latest}"
 UPDATE_RAW_MAIN="https://raw.githubusercontent.com/alecssdeveloper1/AlecsUI/main/install.sh"
-ALECSUI_VER_INSTALLED="1.9.5"
+ALECSUI_VER_INSTALLED="1.9.6"
 G='\033[1;32m'; Y='\033[1;33m'; C='\033[1;36m'; N='\033[0m'
 . $CF
 myip(){ curl -4 -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}'; }
@@ -6410,7 +6479,7 @@ uninst(){
 while true; do
   cat <<T
 
-===== AlecsUI v1.9.5 MENU =====
+===== AlecsUI v1.9.6 MENU =====
    github.com/alecssdeveloper1/AlecsUI
 1) Uninstall
 2) Panel info

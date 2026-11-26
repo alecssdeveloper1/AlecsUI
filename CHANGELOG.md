@@ -4,6 +4,12 @@ All notable changes to AlecsUI are documented here. Format based on [Keep a Chan
 
 AlecsUI is a **modified** fork of ReXUI (Ali / chaliraza777), GPL-3.0.
 
+## [1.9.6] — 2026-11-26
+
+### Fixed
+- Let's Encrypt: stop installing acme.sh with `admin@localhost` (LE `invalidContact`); prompt for real email / default `ssl@domain`
+- ACME: auto-fix bad ACCOUNT_EMAIL; use webroot when HAProxy/443 mode holds port 80
+
 ## [1.9.5] — 2026-11-26
 
 ### Fixed

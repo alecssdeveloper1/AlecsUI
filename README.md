@@ -13,7 +13,7 @@
 
 <br/>
 
-![version](https://img.shields.io/badge/version-1.9.5-0d9488?style=for-the-badge&logo=v&logoColor=white)
+![version](https://img.shields.io/badge/version-1.9.6-0d9488?style=for-the-badge&logo=v&logoColor=white)
 ![license](https://img.shields.io/badge/license-GPL--3.0-16a34a?style=for-the-badge&logo=gnu&logoColor=white)
 ![os](https://img.shields.io/badge/Ubuntu%20%7C%20Debian-x86__64%20%7C%20arm64-0ea5e9?style=for-the-badge&logo=linux&logoColor=white)
 ![stars](https://img.shields.io/github/stars/alecssdeveloper1/AlecsUI?style=for-the-badge&color=f59e0b&logo=github)
@@ -47,12 +47,20 @@
 
 # 🇷🇴 Română
 
-## ✨ Noutăți în 1.9.5
+## ✨ Noutăți în 1.9.6
 
-![New](https://img.shields.io/badge/NOU-v1.9.5-14b8a6?style=for-the-badge)
+![New](https://img.shields.io/badge/NOU-v1.9.6-14b8a6?style=for-the-badge)
+
+- Let's Encrypt: email real (nu `admin@localhost`); webroot când HAProxy ține portul 80
+- Continuă 1.9.5: animații ASCII în instalator
+
+<details>
+<summary><b>🕒 Noutăți în 1.9.5</b></summary>
 
 - Instalator: animații **ASCII** (fără `?` în Termius / SSH fără UTF-8)
 - Continuă 1.9.4: Server check corect, stunnel pe porturi ocupate
+
+</details>
 
 <details>
 <summary><b>🕒 Noutăți în 1.9.4</b></summary>
@@ -294,12 +302,12 @@ Dezinstalare, info panou, reset login (oprește și 2FA), schimbare porturi, res
 
 # 🇬🇧 English
 
-## ✨ What's new in 1.9.5
+## ✨ What's new in 1.9.6
 
-![New](https://img.shields.io/badge/NEW-v1.9.5-14b8a6?style=for-the-badge)
+![New](https://img.shields.io/badge/NEW-v1.9.6-14b8a6?style=for-the-badge)
 
-- Installer: **ASCII** animations (no `?` boxes in Termius / non-UTF-8 SSH)
-- Continues 1.9.4: correct Server check, stunnel on busy ports
+- Let's Encrypt: real email (not `admin@localhost`); webroot when HAProxy holds port 80
+- Continues 1.9.5: ASCII installer animations
 
 <details>
 <summary><b>🕒 What's new in 1.9.1 / 1.8 / 1.7 / 1.6 / 1.5</b></summary>
